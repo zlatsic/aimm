@@ -1,10 +1,12 @@
+import asyncio
+import contextlib
+
 from hat import json
 from hat import aio
 from hat.drivers import tcp
-import asyncio
-import contextlib
 import hat.event.eventer.client
 import hat.event.common
+
 import psutil
 import pytest
 

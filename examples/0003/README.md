@@ -16,10 +16,9 @@ the main GUI app is on 23023 (credentials are `user` and `pass`).
 
 ### DataFlow
 
-[```AnomalyModule```](src_py/air_supervision/modules/controller/anomaly.py) and
-[```ForecastModule```](src_py/air_supervision/modules/controller/forecast.py)
-run in parallel. Both are inherited from
-[```GenericReadingsModule```](src_py/air_supervision/modules/controller.py).
+Different instances of [```Controller```](src_py/air_supervision/modules/controller.py)
+module run in parallel. Both are inherited from
+[```GenericReadingsModule```](src_py/air_supervision/modules/readings.py).
 
 Both recieve new data from the device with event types: ```('gui', 'system',
 'timeseries', 'reading')```. The received data is being saved in their

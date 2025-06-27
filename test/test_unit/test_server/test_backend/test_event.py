@@ -1,6 +1,7 @@
+import base64
+
 import hat.event.common
 from hat import aio
-import base64
 import pytest
 
 from aimm.server.backend import event

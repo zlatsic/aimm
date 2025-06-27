@@ -1,5 +1,6 @@
-from hat import json
 import time
+
+from hat import json
 
 from aimm import plugins
 

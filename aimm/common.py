@@ -1,8 +1,9 @@
-from hat import json
-import hat.monitor.common
 import logging
 import typing
 import importlib.resources
+
+from hat import json
+import hat.monitor.common
 
 
 mlog = logging.getLogger(__name__)

@@ -1,7 +1,8 @@
-from hat import aio
-from hat import util
 import asyncio
 import hashlib
+
+from hat import aio
+from hat import util
 import pytest
 
 from aimm import plugins

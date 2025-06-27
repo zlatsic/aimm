@@ -1,7 +1,8 @@
-from hat import json
 import asyncio
 import hashlib
 import pytest
+
+from hat import json
 
 import aimm.client.repl
 

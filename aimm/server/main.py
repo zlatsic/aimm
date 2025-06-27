@@ -1,5 +1,3 @@
-from hat import aio
-from hat import json
 from pathlib import Path
 import appdirs
 import argparse
@@ -7,6 +5,9 @@ import asyncio
 import contextlib
 import logging.config
 import sys
+
+from hat import aio
+from hat import json
 
 from aimm import plugins
 from aimm.server import common

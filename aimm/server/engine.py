@@ -1,10 +1,11 @@
 from functools import partial
-from hat import aio
-from hat import util
 import asyncio
 import itertools
 import logging
 import typing
+
+from hat import aio
+from hat import util
 
 from aimm import plugins
 from aimm.server import common

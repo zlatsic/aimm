@@ -1,7 +1,8 @@
 from functools import partial
-from hat import aio
 from pathlib import Path
 import sqlite3
+
+from hat import aio
 
 from aimm.server import common
 from aimm import plugins

@@ -1,6 +1,3 @@
-from hat import aio
-from hat import util
-from hat import json
 from typing import (
     Any,
     Dict,
@@ -12,9 +9,13 @@ from typing import (
     Collection,
 )
 import abc
+import logging
+
+from hat import aio
+from hat import util
+from hat import json
 import hat.event.eventer.client
 import hat.event.common
-import logging
 
 import aimm.common
 

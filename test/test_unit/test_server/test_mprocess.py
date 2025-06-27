@@ -1,10 +1,11 @@
-from hat import aio
-from pytest_cov.embed import cleanup_on_signal
 import asyncio
 import contextlib
-import pytest
 import signal
 import time
+
+from hat import aio
+from pytest_cov.embed import cleanup_on_signal
+import pytest
 
 from aimm.server import mprocess
 from aimm.server.mprocess import ProcessTerminatedException

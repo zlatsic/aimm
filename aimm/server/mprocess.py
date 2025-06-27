@@ -2,15 +2,16 @@
 :class:`ProcessManager` object, that is used to create :class:`ProcessHandler`
 objects, wrappers for the process calls."""
 
-from hat import aio
 from typing import Any, Callable, NamedTuple, Optional
 import asyncio
 import contextlib
 import enum
 import logging
 import multiprocessing
-import psutil
 import signal
+
+from hat import aio
+import psutil
 
 
 mlog = logging.getLogger(__name__)
@@ -207,6 +208,7 @@ def _plugin_sigterm_handler(_, __):
 
 
 def _proc_run_fn(pipe, fn, *args, **kwargs):
+    result = _Result(success=False)
     try:
         with sigterm_override():
             result = _Result(success=True, result=fn(*args, **kwargs))

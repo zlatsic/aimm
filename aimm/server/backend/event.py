@@ -1,8 +1,9 @@
+import base64
+import itertools
+
 from hat import aio
 from hat import util
-import base64
 import hat.event.common
-import itertools
 
 from aimm.server import common
 from aimm import plugins

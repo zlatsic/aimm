@@ -1,10 +1,11 @@
-from hat import aio
-from hat import juggler
 import base64
 import logging
+import traceback
+
+from hat import aio
+from hat import juggler
 import numpy
 import pandas
-import traceback
 
 from aimm.server import common
 from aimm import plugins

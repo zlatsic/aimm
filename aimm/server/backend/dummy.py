@@ -1,5 +1,6 @@
-from hat import aio
 import itertools
+
+from hat import aio
 
 from aimm.server import common
 

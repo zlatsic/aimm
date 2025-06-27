@@ -16,7 +16,9 @@ def create_subscription(conf):
 
 
 async def create(conf, engine, event_client):
-    common.json_schema_repo.validate("aimm://server/control/event.yaml#", conf)
+    common.json_schema_validator.validate(
+        "aimm://server/control/event.yaml#", conf
+    )
     if event_client is None:
         raise ValueError(
             "attempting to create event control without hat compatibility"

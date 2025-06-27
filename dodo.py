@@ -14,8 +14,8 @@ def task_schemas_json():
     """Build JSON schema repositories"""
 
     def run():
-        repo = json.SchemaRepository(Path("schemas_json/"))
-        json.encode_file(repo.to_json(), Path("aimm/json_schema_repo.json"))
+        repo = json.create_schema_repository(Path("schemas_json/"))
+        json.encode_file(repo, Path("aimm/json_schema_repo.json"))
 
     return {"actions": [run]}
 

@@ -1,5 +1,6 @@
 from hat import aio
 from hat import util
+from hat import json
 from typing import (
     Any,
     Dict,
@@ -19,7 +20,7 @@ import aimm.common
 
 mlog = logging.getLogger(__name__)
 
-json_schema_repo = aimm.common.json_schema_repo
+json_schema_validator = json.RsSchemaValidator(aimm.common.json_schema_repo)
 
 
 CreateSubscription = Callable[[Dict], hat.event.common.Subscription]

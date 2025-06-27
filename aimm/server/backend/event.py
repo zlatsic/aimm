@@ -14,7 +14,9 @@ def create_subscription(conf):
 
 
 async def create(conf, event_client):
-    common.json_schema_repo.validate("aimm://server/backend/event.yaml#", conf)
+    common.json_schema_validator.validate(
+        "aimm://server/backend/event.yaml#", conf
+    )
     backend = EventBackend(conf, event_client)
     await backend.start()
 

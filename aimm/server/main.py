@@ -21,7 +21,7 @@ def main():
 
     args = _create_parser().parse_args()
     conf = json.decode_file(args.conf)
-    common.json_schema_repo.validate("aimm://server/main.yaml#", conf)
+    common.json_schema_validator.validate("aimm://server/main.yaml#", conf)
 
     logging.config.dictConfig(conf["log"])
     plugins.initialize(conf["plugins"])

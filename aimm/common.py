@@ -1,21 +1,21 @@
 from hat import json
-from pathlib import Path
 import hat.monitor.common
 import logging
 import typing
+import importlib.resources
 
 
 mlog = logging.getLogger(__name__)
 
-
-package_path: Path = Path(__file__).parent
-"""Package file system path"""
-
-json_schema_repo: json.SchemaRepository = json.SchemaRepository(
-    hat.monitor.common.json_schema_repo,
-    json.SchemaRepository.from_json(package_path / "json_schema_repo.json"),
-)
-"""JSON schema repository"""
+with importlib.resources.as_file(
+    importlib.resources.files(__package__) / "json_schema_repo.json"
+) as _path:
+    json_schema_repo: json.SchemaRepository = json.merge_schema_repositories(
+        json.json_schema_repo,
+        json.decode_file(_path),
+        hat.monitor.common.json_schema_repo,
+    )
+    """JSON schema repository"""
 
 
 JSON = typing.Union[

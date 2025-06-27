@@ -8,7 +8,7 @@ from aimm import plugins
 
 
 async def create(conf, _):
-    common.json_schema_repo.validate(
+    common.json_schema_validator.validate(
         "aimm://server/backend/sqlite.yaml#", conf
     )
     backend = SQLiteBackend(conf)

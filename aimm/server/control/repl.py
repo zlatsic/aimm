@@ -14,7 +14,9 @@ mlog = logging.getLogger(__name__)
 
 
 async def create(conf, engine, _):
-    common.json_schema_repo.validate("aimm://server/control/repl.yaml#", conf)
+    common.json_schema_validator.validate(
+        "aimm://server/control/repl.yaml#", conf
+    )
     control = REPLControl(conf, engine)
     return control
 
@@ -41,7 +43,6 @@ class REPLControl(common.Control):
             request_cb=self._request_cb,
             index_path=None,
             ws_path="/",
-            pem_file=conf.get("pem_file"),
             autoflush_delay=conf.get("autoflush_delay", 0.2),
             shutdown_timeout=conf.get("shutdown_timeout", 0.1),
         )

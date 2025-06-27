@@ -51,6 +51,7 @@ class Device(hat.gateway.common.Device):
                     await self._conn_group.async_close()
         finally:
             self._async_group.close()
+            await self._async_group.async_close()
 
     async def _receive_loop(self, connection):
         while True:

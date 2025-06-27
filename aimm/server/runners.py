@@ -92,7 +92,7 @@ class HatRunner(aio.Resource):
                     name=self._conf["name"],
                     group=monitor_conf["group"],
                     server_group=event_server_group,
-                    client_name=f"aimm/{self._conf["name"]}",
+                    client_name=f"aimm/{self._conf['name']}",
                     runner_cb=(
                         lambda _, __, client: self._create_aimm_runner(client)
                     ),

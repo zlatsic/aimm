@@ -148,3 +148,69 @@ def test_model(plugin_teardown):
         {"status": "running"},
         {"status": "complete"},
     ]
+
+
+def test_data_access_args(plugin_teardown):
+
+    @plugins.data_access("test_data_access", state_cb_arg_name="state_cb")
+    def data_access(state_cb):
+        state_cb("state update data access")
+        return "data"
+
+    @plugins.predict(
+        ["test_model"],
+        state_cb_arg_name="state_cb",
+        instance_arg_name="instance",
+    )
+    def predict(data, instance, state_cb):
+        state_cb(f"predicting {instance} using {data}")
+        return "predict-result"
+
+    state = StateMock()
+    assert plugins.exec_predict(
+        "test_model",
+        "instance",
+        state.state_cb,
+        plugins.DataAccessArg("test_data_access", tuple(), {}),
+    ) == (
+        "instance",
+        "predict-result",
+    )
+    assert state.history == [
+        {"status": "init"},
+        {"status": "data_access"},
+        {"data_access": {0: {"status": "init"}}, "status": "data_access"},
+        {"data_access": {0: {"status": "running"}}, "status": "data_access"},
+        {
+            "data_access": {
+                0: {"action": "state update data access", "status": "running"}
+            },
+            "status": "data_access",
+        },
+        {
+            "data_access": {
+                0: {"action": "state update data access", "status": "complete"}
+            },
+            "status": "data_access",
+        },
+        {
+            "data_access": {
+                0: {"action": "state update data access", "status": "complete"}
+            },
+            "status": "running",
+        },
+        {
+            "action": "predicting instance using data",
+            "data_access": {
+                0: {"action": "state update data access", "status": "complete"}
+            },
+            "status": "running",
+        },
+        {
+            "action": "predicting instance using data",
+            "data_access": {
+                0: {"action": "state update data access", "status": "complete"}
+            },
+            "status": "complete",
+        },
+    ]

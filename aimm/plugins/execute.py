@@ -107,6 +107,9 @@ class _StateManager:
         self._state_cb = state_cb
         self._state = {}
 
+    def get_status(self):
+        return self._state["status"]
+
     def set_status(self, status):
         self._update("status", status)
 
@@ -152,15 +155,14 @@ def _handle_data_access_args(args, kwargs, state: _StateManager):
     for arg_name, arg in list(enumerate(args)) + list(kwargs.items()):
         if not isinstance(arg, common.DataAccessArg):
             continue
+        if state.get_status() != "data_access":
+            state.set_status("data_access")
         updates[arg_name] = exec_data_access(
             arg.name,
             lambda substate: state.update_data_access_arg(arg_name, substate),
             *arg.args,
             **arg.kwargs,
         )
-
-    if updates:
-        state.set_status("data_access")
 
     for arg_name, dataset in updates.items():
         if isinstance(arg_name, str):

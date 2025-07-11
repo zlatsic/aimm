@@ -1,4 +1,4 @@
-from aimm.plugins.common import Model, initialize, StateCallback
+from aimm.plugins.common import Model, initialize, StateCallback, DataAccessArg
 from aimm.plugins.decorators import (
     data_access,
     instantiate,
@@ -21,6 +21,7 @@ from aimm.plugins.execute import (
 
 __all__ = [
     "Model",
+    "DataAccessArg",
     "initialize",
     "exec_data_access",
     "exec_instantiate",

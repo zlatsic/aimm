@@ -227,7 +227,7 @@ def _arg_from_json(arg):
     if not isinstance(arg, dict):
         return arg
     if arg.get("type") == "data_access":
-        return common.DataAccess(
+        return plugins.DataAccessArg(
             name=arg["name"], args=arg["args"], kwargs=arg["kwargs"]
         )
     if arg.get("type") == "numpy_array":

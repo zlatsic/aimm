@@ -86,10 +86,9 @@ class EventControl(common.Control):
         try:
             data = event.payload.data
             model_type = data["model_type"]
-            args = [await self._process_arg(arg) for arg in data["args"]]
+            args = [await process_arg(arg) for arg in data["args"]]
             kwargs = {
-                k: await self._process_arg(v)
-                for k, v in data["kwargs"].items()
+                k: await process_arg(v) for k, v in data["kwargs"].items()
             }
             action = self._engine.create_instance(model_type, *args, **kwargs)
             await self._register_action_state(event, "IN_PROGRESS")
@@ -153,10 +152,9 @@ class EventControl(common.Control):
             instance_id = int(event.type[len(event_prefix)])
             if instance_id not in self._engine.state["models"]:
                 raise ValueError("instance {instance_id} not in state")
-            args = [await self._process_arg(a) for a in data["args"]]
+            args = [await process_arg(a) for a in data["args"]]
             kwargs = {
-                k: await self._process_arg(v)
-                for k, v in data["kwargs"].items()
+                k: await process_arg(v) for k, v in data["kwargs"].items()
             }
 
             action = self._engine.fit(instance_id, *args, **kwargs)
@@ -180,10 +178,9 @@ class EventControl(common.Control):
             instance_id = int(event.type[len(event_prefix)])
             if instance_id not in self._engine.state["models"]:
                 raise ValueError("instance {instance_id} not in state")
-            args = [await self._process_arg(a) for a in data["args"]]
+            args = [await process_arg(a) for a in data["args"]]
             kwargs = {
-                k: await self._process_arg(v)
-                for k, v in data["kwargs"].items()
+                k: await process_arg(v) for k, v in data["kwargs"].items()
             }
 
             action = self._engine.predict(instance_id, *args, **kwargs)
@@ -218,19 +215,20 @@ class EventControl(common.Control):
             ]
         )
 
-    async def _process_arg(self, arg):
-        if not (isinstance(arg, dict) and arg.get("type") == "data_access"):
-            return arg
-        return common.DataAccess(
-            name=arg["name"], args=arg["args"], kwargs=arg["kwargs"]
-        )
-
     async def _instance_from_json(self, instance_b64, model_type):
         return await self._executor(
             plugins.exec_deserialize,
             model_type,
             base64.b64decode(instance_b64),
         )
+
+
+async def process_arg(arg):
+    if not (isinstance(arg, dict) and arg.get("type") == "data_access"):
+        return arg
+    return plugins.DataAccessArg(
+        name=arg["name"], args=arg["args"], kwargs=arg["kwargs"]
+    )
 
 
 def _state_to_json(engine):

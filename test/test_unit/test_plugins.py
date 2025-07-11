@@ -1,24 +1,44 @@
 from aimm import plugins
 
 
-def dummy_state_cb(state):
-    print("state:", state)
+class StateMock:
+    def __init__(self):
+        self.history = []
+
+    def state_cb(self, state):
+        self.history.append(state)
 
 
 def test_instantiate(plugin_teardown):
     @plugins.instantiate("test", state_cb_arg_name="state_cb")
     def instantiate(state_cb):
-        return state_cb
+        state_cb("state update")
+        return "instance"
 
-    assert plugins.exec_instantiate("test", dummy_state_cb) == dummy_state_cb
+    state = StateMock()
+    assert plugins.exec_instantiate("test", state.state_cb) == "instance"
+    assert state.history == [
+        {"status": "init"},
+        {"status": "running"},
+        {"status": "running", "action": "state update"},
+        {"status": "complete", "action": "state update"},
+    ]
 
 
 def test_data_access(plugin_teardown):
     @plugins.data_access("test", state_cb_arg_name="state_cb")
     def data_access(state_cb):
-        return state_cb
+        state_cb("state update")
+        return "data"
 
-    assert plugins.exec_data_access("test", dummy_state_cb) == dummy_state_cb
+    state = StateMock()
+    assert plugins.exec_data_access("test", state.state_cb) == "data"
+    assert state.history == [
+        {"status": "init"},
+        {"status": "running"},
+        {"status": "running", "action": "state update"},
+        {"status": "complete", "action": "state update"},
+    ]
 
 
 def test_fit(plugin_teardown):
@@ -26,10 +46,20 @@ def test_fit(plugin_teardown):
         ["test"], state_cb_arg_name="state_cb", instance_arg_name="instance"
     )
     def fit(state_cb, instance):
-        return state_cb, instance
+        state_cb("state update")
+        return instance + "-fit"
 
-    result = plugins.exec_fit("test", "instance", dummy_state_cb)
-    assert result == (dummy_state_cb, "instance")
+    state = StateMock()
+    assert (
+        plugins.exec_fit("test", "instance", state.state_cb) == "instance-fit"
+    )
+
+    assert state.history == [
+        {"status": "init"},
+        {"status": "running"},
+        {"status": "running", "action": "state update"},
+        {"status": "complete", "action": "state update"},
+    ]
 
 
 def test_predict(plugin_teardown):
@@ -37,12 +67,20 @@ def test_predict(plugin_teardown):
         ["test"], state_cb_arg_name="state_cb", instance_arg_name="instance"
     )
     def predict(state_cb, instance):
-        return state_cb, instance
+        state_cb("state update")
+        return "predict-result"
 
-    assert plugins.exec_predict("test", "instance", dummy_state_cb) == (
+    state = StateMock()
+    assert plugins.exec_predict("test", "instance", state.state_cb) == (
         "instance",
-        (dummy_state_cb, "instance"),
+        "predict-result",
     )
+    assert state.history == [
+        {"status": "init"},
+        {"status": "running"},
+        {"status": "running", "action": "state update"},
+        {"status": "complete", "action": "state update"},
+    ]
 
 
 def test_serialize(plugin_teardown):
@@ -89,12 +127,24 @@ def test_model(plugin_teardown):
 
     model_type = "test_plugins.Model1"
 
+    state = StateMock()
     model = plugins.exec_instantiate(
-        model_type, dummy_state_cb, "a1", "a2", k1="1", k2="2"
+        model_type, state.state_cb, "a1", "a2", k1="1", k2="2"
     )
     assert model.args == ("a1", "a2")
     assert model.kwargs == {"k1": "1", "k2": "2"}
+    assert state.history == [
+        {"status": "init"},
+        {"status": "running"},
+        {"status": "complete"},
+    ]
 
-    plugins.exec_fit(model_type, model, dummy_state_cb, "fit_a1", fit_k1="1")
+    state = StateMock()
+    plugins.exec_fit(model_type, model, state.state_cb, "fit_a1", fit_k1="1")
     assert model.fit_args == ("fit_a1",)
     assert model.fit_kwargs == {"fit_k1": "1"}
+    assert state.history == [
+        {"status": "init"},
+        {"status": "running"},
+        {"status": "complete"},
+    ]

@@ -1,3 +1,11 @@
+"""Depending on the plugin implementation, potentially long-lasting methods
+performing:
+* dataset downloads
+* model optimizations
+
+Meant to be executed in parallel for in-production systems.
+"""
+
 from typing import Any, ByteString
 
 from aimm.plugins import common
@@ -8,24 +16,33 @@ def exec_data_access(
     name: str,
     state_cb: common.StateCallback = lambda state: None,
     *args: Any,
-    **kwargs: Any
+    **kwargs: Any,
 ) -> Any:
     """Uses a loaded plugin to access data"""
-    plugin = decorators.get_data_access(name)
-    kwargs = _kwargs_add_state_cb(plugin.state_cb_arg_name, state_cb, kwargs)
-    return plugin.function(*args, **kwargs)
+    with _StateManager(state_cb) as state:
+        plugin = decorators.get_data_access(name)
+
+        args, kwargs = _preprocess_args(args, kwargs, plugin, state)
+
+        state.set_status("running")
+        return plugin.function(*args, **kwargs)
 
 
 def exec_instantiate(
     model_type: str,
     state_cb: common.StateCallback = lambda state: None,
     *args: Any,
-    **kwargs: Any
+    **kwargs: Any,
 ) -> Any:
-    """Uses a loaded plugin to create a model instance"""
-    plugin = decorators.get_instantiate(model_type)
-    kwargs = _kwargs_add_state_cb(plugin.state_cb_arg_name, state_cb, kwargs)
-    return plugin.function(*args, **kwargs)
+    """Uses a loaded plugin to create a model instance. Will handle any data
+    access arguments and load the data."""
+    with _StateManager(state_cb) as state:
+        plugin = decorators.get_instantiate(model_type)
+
+        args, kwargs = _preprocess_args(args, kwargs, plugin, state)
+
+        state.set_status("running")
+        return plugin.function(*args, **kwargs)
 
 
 def exec_fit(
@@ -33,15 +50,20 @@ def exec_fit(
     instance: Any,
     state_cb: common.StateCallback = lambda state: None,
     *args: Any,
-    **kwargs: Any
+    **kwargs: Any,
 ) -> Any:
     """Uses a loaded plugin to fit a model instance"""
-    plugin = decorators.get_fit(model_type)
-    kwargs = _kwargs_add_state_cb(plugin.state_cb_arg_name, state_cb, kwargs)
-    args, kwargs = _args_add_instance(
-        plugin.instance_arg_name, instance, args, kwargs
-    )
-    return plugin.function(*args, **kwargs)
+    with _StateManager(state_cb) as state:
+        plugin = decorators.get_fit(model_type)
+
+        args, kwargs = _preprocess_args(args, kwargs, plugin, state)
+
+        args, kwargs = _args_add_instance(
+            plugin.instance_arg_name, instance, args, kwargs
+        )
+
+        state.set_status("running")
+        return plugin.function(*args, **kwargs)
 
 
 def exec_predict(
@@ -49,17 +71,22 @@ def exec_predict(
     instance: Any,
     state_cb: common.StateCallback = lambda state: None,
     *args: Any,
-    **kwargs: Any
+    **kwargs: Any,
 ) -> tuple[Any, Any]:
     """Uses a loaded plugin to perform a prediction with a given model
     instance. Also returns the instance because it might be altered during the
     prediction, e.g. with reinforcement learning models."""
-    plugin = decorators.get_predict(model_type)
-    kwargs = _kwargs_add_state_cb(plugin.state_cb_arg_name, state_cb, kwargs)
-    args, kwargs = _args_add_instance(
-        plugin.instance_arg_name, instance, args, kwargs
-    )
-    return instance, plugin.function(*args, **kwargs)
+    with _StateManager(state_cb) as state:
+        plugin = decorators.get_predict(model_type)
+
+        args, kwargs = _preprocess_args(args, kwargs, plugin, state)
+
+        args, kwargs = _args_add_instance(
+            plugin.instance_arg_name, instance, args, kwargs
+        )
+
+        state.set_status("running")
+        return instance, plugin.function(*args, **kwargs)
 
 
 def exec_serialize(model_type: str, instance: Any) -> ByteString:
@@ -72,6 +99,78 @@ def exec_deserialize(model_type: str, instance_bytes: ByteString) -> Any:
     """Uses a loaded plugin to convert bytes into a model instance"""
     plugin = decorators.get_deserialize(model_type)
     return plugin.function(instance_bytes)
+
+
+class _StateManager:
+
+    def __init__(self, state_cb):
+        self._state_cb = state_cb
+        self._state = {}
+
+    def set_status(self, status):
+        self._update("status", status)
+
+    def update_action(self, value):
+        self._update("action", value)
+
+    def update_data_access_complete(self, state):
+        self._update("data_access", state)
+
+    def update_data_access_arg(self, arg_name, value):
+        data_access_state = dict(self._state.get("data_access", {}))
+        data_access_state[arg_name] = value
+        self.update_data_access_complete(data_access_state)
+
+    def _update(self, key, value):
+        self._state = {**self._state, key: value}
+        self._state_cb(self._state)
+
+    def __enter__(self):
+        self._state = {
+            "status": "init",
+        }
+        self._state_cb(self._state)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.set_status("error" if exc_type else "complete")
+
+
+def _preprocess_args(args, kwargs, plugin, state):
+    args, kwargs = _handle_data_access_args(args, kwargs, state)
+    kwargs = _kwargs_add_state_cb(
+        plugin.state_cb_arg_name,
+        state.update_action,
+        kwargs,
+    )
+    return args, kwargs
+
+
+def _handle_data_access_args(args, kwargs, state: _StateManager):
+    updates = {}
+    args = list(args)
+    for arg_name, arg in list(enumerate(args)) + list(kwargs.items()):
+        if not isinstance(arg, common.DataAccessArg):
+            continue
+        updates[arg_name] = exec_data_access(
+            arg.name,
+            lambda substate: state.update_data_access_arg(arg_name, substate),
+            *arg.args,
+            **arg.kwargs,
+        )
+
+    if updates:
+        state.set_status("data_access")
+
+    for arg_name, dataset in updates.items():
+        if isinstance(arg_name, str):
+            kwargs[arg_name] = dataset
+        elif isinstance(arg_name, int):
+            args[arg_name] = dataset
+        else:
+            raise Exception(f"incorrect arg type {type(arg_name)}")
+
+    return tuple(args), kwargs
 
 
 def _kwargs_add_state_cb(state_cb_arg_name, cb, kwargs):

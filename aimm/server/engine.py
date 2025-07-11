@@ -135,123 +135,92 @@ class _Engine(common.Engine):
         self._callback_registry.notify()
 
     async def _act_create_instance(self, model_type, args, kwargs, state_cb):
-        reactive = _ReactiveState(
+        with _StateManager(
             {
-                "meta": {
-                    "call": "create_instance",
-                    "model_type": model_type,
-                    "args": [str(a) for a in args],
-                    "kwargs": {k: str(v) for k, v in kwargs.items()},
-                }
-            }
-        )
-        reactive.register_state_change_cb(lambda: state_cb(reactive.state))
+                "call": "create_instance",
+                "model_type": model_type,
+                "args": [str(a) for a in args],
+                "kwargs": {k: str(v) for k, v in kwargs.items()},
+            },
+            state_cb,
+        ) as state:
 
-        reactive.update(dict(reactive.state, progress="accessing_data"))
-        args, kwargs = await _derive_data_access_args(
-            self._pool, args, kwargs, reactive.register_substate("data_access")
-        )
-
-        reactive.update(dict(reactive.state, progress="executing"))
-        handler = self._pool.create_handler(
-            reactive.register_substate("action").update
-        )
-        instance = await handler.run(
-            plugins.exec_instantiate,
-            model_type,
-            handler.proc_notify_state_change,
-            *args,
-            **kwargs
-        )
-
-        reactive.update(dict(reactive.state, progress="storing"))
-        model = await self._backend.create_model(model_type, instance)
-        self._set_model(model)
-
-        reactive.update(dict(reactive.state, progress="complete"))
-
-        return model
-
-    async def _act_fit(self, instance_id, args, kwargs, state_cb):
-        reactive = _ReactiveState(
-            {
-                "meta": {
-                    "call": "fit",
-                    "model": instance_id,
-                    "args": [str(a) for a in args],
-                    "kwargs": {k: str(v) for k, v in kwargs.items()},
-                }
-            }
-        )
-        reactive.register_state_change_cb(lambda: state_cb(reactive.state))
-
-        reactive.update(dict(reactive.state, progress="accessing_data"))
-        args, kwargs = await _derive_data_access_args(
-            self._pool, args, kwargs, reactive.register_substate("data_access")
-        )
-
-        reactive.update(dict(reactive.state, progress="executing"))
-        handler = self._pool.create_handler(
-            reactive.register_substate("action").update
-        )
-
-        model = self.state["models"][instance_id]
-        async with self._locks[instance_id]:
+            handler = self._pool.create_handler(state.set_run)
             instance = await handler.run(
-                plugins.exec_fit,
-                model.model_type,
-                model.instance,
+                plugins.exec_instantiate,
+                model_type,
                 handler.proc_notify_state_change,
                 *args,
                 **kwargs
             )
-        new_model = await self._update_model(instance, model, reactive)
-        reactive.update(dict(reactive.state, progress="complete"))
-        return new_model
+            state.set_status("storing")
+
+            model = await self._backend.create_model(model_type, instance)
+            self._set_model(model)
+        return model
+
+    async def _act_fit(self, instance_id, args, kwargs, state_cb):
+        with _StateManager(
+            {
+                "call": "fit",
+                "model": instance_id,
+                "args": [str(a) for a in args],
+                "kwargs": {k: str(v) for k, v in kwargs.items()},
+            },
+            state_cb,
+        ) as state:
+
+            handler = self._pool.create_handler(state.set_run)
+            model = self.state["models"][instance_id]
+            async with self._locks[instance_id]:
+                instance = await handler.run(
+                    plugins.exec_fit,
+                    model.model_type,
+                    model.instance,
+                    handler.proc_notify_state_change,
+                    *args,
+                    **kwargs
+                )
+
+            state.set_status("storing")
+            return await self._update_model(instance, model)
 
     async def _act_predict(self, instance_id, args, kwargs, state_cb):
-        reactive = _ReactiveState(
+        with _StateManager(
             {
                 "meta": {
                     "call": "predict",
                     "model": instance_id,
                     "args": [str(a) for a in args],
                     "kwargs": {k: str(v) for k, v in kwargs.items()},
-                }
-            }
-        )
-        reactive.register_state_change_cb(lambda: state_cb(reactive.state))
+                },
+                "status": "running",
+                "run": None,
+            },
+            state_cb,
+        ) as state:
+            handler = self._pool.create_handler(state.set_run)
+            async with self._locks[instance_id]:
+                model = self.state["models"][instance_id]
+                instance, prediction = await handler.run(
+                    plugins.exec_predict,
+                    model.model_type,
+                    model.instance,
+                    handler.proc_notify_state_change,
+                    *args,
+                    **kwargs
+                )
 
-        reactive.update(dict(reactive.state, progress="accessing_data"))
-        args, kwargs = await _derive_data_access_args(
-            self._pool, args, kwargs, reactive.register_substate("data_access")
-        )
+            state.set_status("storing")
+            await self._update_model(instance, model)
+            return prediction
 
-        handler = self._pool.create_handler(
-            reactive.register_substate("action").update
-        )
-        async with self._locks[instance_id]:
-            model = self.state["models"][instance_id]
-            reactive.update(dict(reactive.state, progress="executing"))
-            instance, prediction = await handler.run(
-                plugins.exec_predict,
-                model.model_type,
-                model.instance,
-                handler.proc_notify_state_change,
-                *args,
-                **kwargs
-            )
-        await self._update_model(instance, model, reactive)
-        reactive.update(dict(reactive.state, progress="complete"))
-        return prediction
-
-    async def _update_model(self, instance, model, reactive):
+    async def _update_model(self, instance, model):
         new_model = common.Model(
             instance=instance,
             model_type=model.model_type,
             instance_id=model.instance_id,
         )
-        reactive.update(dict(reactive.state, progress="storing"))
         await self._backend.update_model(new_model)
 
         self._set_model(new_model)
@@ -277,69 +246,24 @@ class _Action(common.Action):
         return await self._task
 
 
-async def _derive_data_access_args(pool, args, kwargs, reactive_state):
-    actions = {}
-    async with aio.Group() as group:
-        for i, arg in enumerate(args):
-            if not isinstance(arg, common.DataAccess):
-                continue
-            actions[i] = group.spawn(
-                _get_data_access_action, pool, reactive_state, i, arg
-            )
-        for key, value in kwargs.items():
-            if not isinstance(value, common.DataAccess):
-                continue
-            actions[key] = group.spawn(
-                _get_data_access_action, pool, reactive_state, i, arg
-            )
+class _StateManager:
+    def __init__(self, meta, state_cb):
+        self._state_cb = state_cb
+        self._state = {"meta": meta}
 
-        if actions:
-            await asyncio.wait([task for task in actions.values()])
-            args = list(args)
-            for key, task in actions.items():
-                if isinstance(key, int):
-                    args[key] = task.result()
-                elif isinstance(key, str):
-                    kwargs[key] = task.result()
-    return args, kwargs
+    def set_status(self, status):
+        self._set("status", status)
 
+    def set_run(self, run):
+        self._set("run", run)
 
-async def _get_data_access_action(pool, reactive_state, key, data_access):
-    handler = pool.create_handler(reactive_state.register_substate(key).update)
-    return await handler.run(
-        plugins.exec_data_access,
-        data_access.name,
-        handler.proc_notify_state_change,
-        *data_access.args,
-        **data_access.kwargs
-    )
+    def _set(self, key: str, value):
+        self._state = {**self._state, key: value}
+        self._state_cb(self._state)
 
+    def __enter__(self) -> "_StateManager":
+        self.set_status("running")
+        return self
 
-class _ReactiveState:
-    def __init__(self, state):
-        self._state = state
-        self._substates = {}
-        self._cb_registry = util.CallbackRegistry()
-
-    @property
-    def state(self):
-        return self._state
-
-    def register_state_change_cb(self, cb):
-        return self._cb_registry.register(cb)
-
-    def update(self, state):
-        self._state = state
-        self._cb_registry.notify()
-
-    def register_substate(self, key):
-        reactive = _ReactiveState(self._state.get(key, {}))
-        reactive.register_state_change_cb(
-            partial(self._on_substate_change, key)
-        )
-        self._substates[key] = reactive
-        return reactive
-
-    def _on_substate_change(self, key):
-        self._state = {**self._state, **{key: self._substates[key].state}}
-        self._cb_registry.notify()
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.set_status("error" if exc_type else "complete")

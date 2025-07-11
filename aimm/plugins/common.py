@@ -1,4 +1,12 @@
-from typing import Any, ByteString, Callable, Dict, NamedTuple, Optional
+from typing import (
+    Any,
+    ByteString,
+    Callable,
+    Dict,
+    NamedTuple,
+    Optional,
+    Iterable,
+)
 import abc
 import importlib
 import logging
@@ -85,6 +93,18 @@ class DeserializePlugin(NamedTuple):
 
     function: Callable
     """plugin function"""
+
+
+class DataAccessArg(NamedTuple):
+    """Object signifying a data access plugin needs to be executed when passed
+    as an arg to other plugins"""
+
+    name: str
+    """name of the data access type, used to identify which plugin to use"""
+    args: Iterable
+    """positional arguments to be passed to the plugin call"""
+    kwargs: Dict[str, Any]
+    """keyword arguments to be passed to the plugin call"""
 
 
 def initialize(conf: Dict):

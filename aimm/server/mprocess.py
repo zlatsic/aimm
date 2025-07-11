@@ -125,13 +125,17 @@ class ProcessHandler(aio.Resource):
     def proc_notify_state_change(self, state: Any):
         """To be passed to and ran in the separate process call. Notifies the
         handler of state change, new state is passed to ``state_cb`` received
-        in the constructor.
+        in the constructor. Blocks on separate process end until the read pipe
+        has been emptied.
 
         Args:
             state: call state, needs to be pickleable
 
         """
-        self._state_pipe[1].send(state)
+        read, write = self._state_pipe
+        write.send(state)
+        while read.poll():
+            pass
 
     async def run(self, fn: Callable, *args: Any, **kwargs: Any):
         """Requests the start of function execution in the separate process.

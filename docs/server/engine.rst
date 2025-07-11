@@ -97,19 +97,31 @@ dictionary, with the following structure:
                                 type: array
                             kwargs:
                                 type: object
-                    progress:
+                    status:
                         enum:
-                            - accessing_data
-                            - executing
+                            - running
+                            - storing
                             - complete
-                    data_access:
+                            - error
+                    run:
+                        description: set in the independent runner
                         type: object
-                        description: |
-                            keys represent argument IDs (numbers for
-                            positional, strings for named), values are set by
-                            plugin's state callbacks
-                    action:
-                        description: set by plugin state callback
+                        required:
+                            - status
+                        properties:
+                            status:
+                                enum:
+                                    - init
+                                    - data_access
+                                    - running
+                                    - complete
+                                    - error
+                            data_access:
+                                patternProperties:
+                                    '(.)+':
+                            action:
+                                patternProperties:
+                                    '(.)+':
     ...
 
 Multiprocessing

@@ -9,6 +9,7 @@ from typing import (
     Collection,
 )
 import abc
+import enum
 import logging
 
 from hat import aio
@@ -17,6 +18,7 @@ from hat import json
 import hat.event.eventer.client
 import hat.event.common
 
+from aimm import plugins
 import aimm.common
 
 mlog = logging.getLogger(__name__)
@@ -154,6 +156,24 @@ def create_backend(
 ) -> "Backend":
     """Placeholder of the backend's create function, needs to satisfy the given
     signature"""
+
+
+class ActionStatus(enum.StrEnum):
+    INIT = "init"
+    RUNNING = "running"
+    STORING = "storing"
+    COMPLETE = "complete"
+    ERROR = "error"
+
+
+class ActionState(NamedTuple):
+    """Object representing the state of an individual action"""
+
+    meta: dict[str, Any]
+    """Information about the action call"""
+    status: ActionStatus
+    """Current action status"""
+    run: Optional[plugins.ExecutionState]
 
 
 class Backend(aio.Resource, abc.ABC):

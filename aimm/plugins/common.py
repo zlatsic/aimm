@@ -6,8 +6,10 @@ from typing import (
     NamedTuple,
     Optional,
     Iterable,
+    Union,
 )
 import abc
+import enum
 import importlib
 import logging
 
@@ -93,6 +95,25 @@ class DeserializePlugin(NamedTuple):
 
     function: Callable
     """plugin function"""
+
+
+class ExecutionStatus(enum.StrEnum):
+    INIT = "init"
+    DATA_ACCESS = "data_access"
+    RUNNING = "running"
+    COMPLETE = "complete"
+    ERROR = "error"
+
+
+class ExecutionState(NamedTuple):
+    """Object representing state of an individual execution call"""
+
+    status: ExecutionStatus
+    """status indicating which execution phase is currently occurring"""
+    data_access: dict[Union[str, int], "ExecutionState"]
+    """sub-states for every data access argument passed to the call"""
+    action: Any
+    """state set by the plugin implementation"""
 
 
 class DataAccessArg(NamedTuple):

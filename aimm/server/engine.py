@@ -146,6 +146,7 @@ class _Engine(common.Engine):
         ) as state:
 
             handler = self._pool.create_handler(state.set_run)
+            state.set_status(common.ActionStatus.RUNNING)
             instance = await handler.run(
                 plugins.exec_instantiate,
                 model_type,
@@ -153,7 +154,7 @@ class _Engine(common.Engine):
                 *args,
                 **kwargs
             )
-            state.set_status("storing")
+            state.set_status(common.ActionStatus.STORING)
 
             model = await self._backend.create_model(model_type, instance)
             self._set_model(model)
@@ -173,6 +174,7 @@ class _Engine(common.Engine):
             handler = self._pool.create_handler(state.set_run)
             model = self.state["models"][instance_id]
             async with self._locks[instance_id]:
+                state.set_status(common.ActionStatus.RUNNING)
                 instance = await handler.run(
                     plugins.exec_fit,
                     model.model_type,
@@ -182,7 +184,7 @@ class _Engine(common.Engine):
                     **kwargs
                 )
 
-            state.set_status("storing")
+            state.set_status(common.ActionStatus.STORING)
             return await self._update_model(instance, model)
 
     async def _act_predict(self, instance_id, args, kwargs, state_cb):
@@ -202,6 +204,7 @@ class _Engine(common.Engine):
             handler = self._pool.create_handler(state.set_run)
             async with self._locks[instance_id]:
                 model = self.state["models"][instance_id]
+                state.set_status(common.ActionStatus.RUNNING)
                 instance, prediction = await handler.run(
                     plugins.exec_predict,
                     model.model_type,
@@ -211,7 +214,7 @@ class _Engine(common.Engine):
                     **kwargs
                 )
 
-            state.set_status("storing")
+            state.set_status(common.ActionStatus.STORING)
             await self._update_model(instance, model)
             return prediction
 
@@ -249,21 +252,25 @@ class _Action(common.Action):
 class _StateManager:
     def __init__(self, meta, state_cb):
         self._state_cb = state_cb
-        self._state = {"meta": meta}
+        self._state = common.ActionState(
+            meta=meta, status=common.ActionStatus.INIT, run=None
+        )
 
-    def set_status(self, status):
-        self._set("status", status)
+    def set_status(self, status: common.ActionStatus):
+        self._state = self._state._replace(status=status)
+        self._state_cb(self._state)
 
-    def set_run(self, run):
-        self._set("run", run)
-
-    def _set(self, key: str, value):
-        self._state = {**self._state, key: value}
+    def set_run(self, run: plugins.ExecutionState):
+        self._state = self._state._replace(run=run)
         self._state_cb(self._state)
 
     def __enter__(self) -> "_StateManager":
-        self.set_status("running")
+        self._state_cb(self._state)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.set_status("error" if exc_type else "complete")
+        self.set_status(
+            common.ActionStatus.ERROR
+            if exc_type
+            else common.ActionStatus.COMPLETE
+        )

@@ -188,7 +188,9 @@ async def _generate_state(models, actions):
             model_id: await _model_to_json(model)
             for model_id, model in models.items()
         },
-        "actions": actions,
+        "actions": {
+            k: _action_to_json(action) for k, action in actions.items()
+        },
     }
 
 
@@ -204,6 +206,24 @@ async def _model_to_json(model):
         "model_type": model.model_type,
         "instance": instance_bytes,
     }
+
+
+def _action_to_json(action: common.ActionState):
+    action_dict = action._asdict()
+    action_dict["run"] = _execution_to_json(action.run)
+    return action_dict
+
+
+def _execution_to_json(execution_state: plugins.ExecutionState):
+    if execution_state is None:
+        return None
+    run_dict = execution_state._asdict()
+    run_dict["data_access"] = {
+        k: _execution_to_json(v)
+        for k, v in execution_state.data_access.items()
+    }
+    run_dict["action"] = _execution_to_json(execution_state.action)
+    return run_dict
 
 
 def _prediction_to_json(prediction):

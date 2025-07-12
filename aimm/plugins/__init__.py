@@ -1,4 +1,11 @@
-from aimm.plugins.common import Model, initialize, StateCallback, DataAccessArg
+from aimm.plugins.common import (
+    ExecutionState,
+    ExecutionStatus,
+    Model,
+    initialize,
+    StateCallback,
+    DataAccessArg,
+)
 from aimm.plugins.decorators import (
     data_access,
     instantiate,
@@ -20,6 +27,8 @@ from aimm.plugins.execute import (
 
 
 __all__ = [
+    "ExecutionState",
+    "ExecutionStatus",
     "Model",
     "DataAccessArg",
     "initialize",

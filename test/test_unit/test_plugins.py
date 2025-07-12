@@ -18,10 +18,22 @@ def test_instantiate(plugin_teardown):
     state = StateMock()
     assert plugins.exec_instantiate("test", state.state_cb) == "instance"
     assert state.history == [
-        {"status": "init"},
-        {"status": "running"},
-        {"status": "running", "action": "state update"},
-        {"status": "complete", "action": "state update"},
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.INIT, data_access={}, action=None
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.RUNNING, data_access={}, action=None
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.RUNNING,
+            data_access={},
+            action="state update",
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.COMPLETE,
+            data_access={},
+            action="state update",
+        ),
     ]
 
 
@@ -34,10 +46,22 @@ def test_data_access(plugin_teardown):
     state = StateMock()
     assert plugins.exec_data_access("test", state.state_cb) == "data"
     assert state.history == [
-        {"status": "init"},
-        {"status": "running"},
-        {"status": "running", "action": "state update"},
-        {"status": "complete", "action": "state update"},
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.INIT, data_access={}, action=None
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.RUNNING, data_access={}, action=None
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.RUNNING,
+            data_access={},
+            action="state update",
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.COMPLETE,
+            data_access={},
+            action="state update",
+        ),
     ]
 
 
@@ -55,10 +79,22 @@ def test_fit(plugin_teardown):
     )
 
     assert state.history == [
-        {"status": "init"},
-        {"status": "running"},
-        {"status": "running", "action": "state update"},
-        {"status": "complete", "action": "state update"},
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.INIT, data_access={}, action=None
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.RUNNING, data_access={}, action=None
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.RUNNING,
+            data_access={},
+            action="state update",
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.COMPLETE,
+            data_access={},
+            action="state update",
+        ),
     ]
 
 
@@ -76,10 +112,22 @@ def test_predict(plugin_teardown):
         "predict-result",
     )
     assert state.history == [
-        {"status": "init"},
-        {"status": "running"},
-        {"status": "running", "action": "state update"},
-        {"status": "complete", "action": "state update"},
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.INIT, data_access={}, action=None
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.RUNNING, data_access={}, action=None
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.RUNNING,
+            data_access={},
+            action="state update",
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.COMPLETE,
+            data_access={},
+            action="state update",
+        ),
     ]
 
 
@@ -134,9 +182,17 @@ def test_model(plugin_teardown):
     assert model.args == ("a1", "a2")
     assert model.kwargs == {"k1": "1", "k2": "2"}
     assert state.history == [
-        {"status": "init"},
-        {"status": "running"},
-        {"status": "complete"},
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.INIT, data_access={}, action=None
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.RUNNING, data_access={}, action=None
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.COMPLETE,
+            data_access={},
+            action=None,
+        ),
     ]
 
     state = StateMock()
@@ -144,9 +200,17 @@ def test_model(plugin_teardown):
     assert model.fit_args == ("fit_a1",)
     assert model.fit_kwargs == {"fit_k1": "1"}
     assert state.history == [
-        {"status": "init"},
-        {"status": "running"},
-        {"status": "complete"},
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.INIT, data_access={}, action=None
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.RUNNING, data_access={}, action=None
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.COMPLETE,
+            data_access={},
+            action=None,
+        ),
     ]
 
 
@@ -177,40 +241,89 @@ def test_data_access_args(plugin_teardown):
         "predict-result",
     )
     assert state.history == [
-        {"status": "init"},
-        {"status": "data_access"},
-        {"data_access": {0: {"status": "init"}}, "status": "data_access"},
-        {"data_access": {0: {"status": "running"}}, "status": "data_access"},
-        {
-            "data_access": {
-                0: {"action": "state update data access", "status": "running"}
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.INIT, data_access={}, action=None
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.DATA_ACCESS,
+            data_access={},
+            action=None,
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.DATA_ACCESS,
+            data_access={
+                0: plugins.ExecutionState(
+                    status=plugins.ExecutionStatus.INIT,
+                    data_access={},
+                    action=None,
+                )
             },
-            "status": "data_access",
-        },
-        {
-            "data_access": {
-                0: {"action": "state update data access", "status": "complete"}
+            action=None,
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.DATA_ACCESS,
+            data_access={
+                0: plugins.ExecutionState(
+                    status=plugins.ExecutionStatus.RUNNING,
+                    data_access={},
+                    action=None,
+                )
             },
-            "status": "data_access",
-        },
-        {
-            "data_access": {
-                0: {"action": "state update data access", "status": "complete"}
+            action=None,
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.DATA_ACCESS,
+            data_access={
+                0: plugins.ExecutionState(
+                    status=plugins.ExecutionStatus.RUNNING,
+                    data_access={},
+                    action="state update data access",
+                )
             },
-            "status": "running",
-        },
-        {
-            "action": "predicting instance using data",
-            "data_access": {
-                0: {"action": "state update data access", "status": "complete"}
+            action=None,
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.DATA_ACCESS,
+            data_access={
+                0: plugins.ExecutionState(
+                    status=plugins.ExecutionStatus.COMPLETE,
+                    data_access={},
+                    action="state update data access",
+                )
             },
-            "status": "running",
-        },
-        {
-            "action": "predicting instance using data",
-            "data_access": {
-                0: {"action": "state update data access", "status": "complete"}
+            action=None,
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.RUNNING,
+            data_access={
+                0: plugins.ExecutionState(
+                    status=plugins.ExecutionStatus.COMPLETE,
+                    data_access={},
+                    action="state update data access",
+                )
             },
-            "status": "complete",
-        },
+            action=None,
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.RUNNING,
+            data_access={
+                0: plugins.ExecutionState(
+                    status=plugins.ExecutionStatus.COMPLETE,
+                    data_access={},
+                    action="state update data access",
+                )
+            },
+            action="predicting instance using data",
+        ),
+        plugins.ExecutionState(
+            status=plugins.ExecutionStatus.COMPLETE,
+            data_access={
+                0: plugins.ExecutionState(
+                    status=plugins.ExecutionStatus.COMPLETE,
+                    data_access={},
+                    action="state update data access",
+                )
+            },
+            action="predicting instance using data",
+        ),
     ]

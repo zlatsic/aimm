@@ -6,10 +6,11 @@ performing:
 Meant to be executed in parallel for in-production systems.
 """
 
-from typing import Any, ByteString
+from typing import Any, ByteString, Union
 
 from aimm.plugins import common
 from aimm.plugins import decorators
+from aimm.plugins.common import ExecutionState
 
 
 def exec_data_access(
@@ -24,7 +25,7 @@ def exec_data_access(
 
         args, kwargs = _preprocess_args(args, kwargs, plugin, state)
 
-        state.set_status("running")
+        state.set_status(common.ExecutionStatus.RUNNING)
         return plugin.function(*args, **kwargs)
 
 
@@ -41,7 +42,7 @@ def exec_instantiate(
 
         args, kwargs = _preprocess_args(args, kwargs, plugin, state)
 
-        state.set_status("running")
+        state.set_status(common.ExecutionStatus.RUNNING)
         return plugin.function(*args, **kwargs)
 
 
@@ -62,7 +63,7 @@ def exec_fit(
             plugin.instance_arg_name, instance, args, kwargs
         )
 
-        state.set_status("running")
+        state.set_status(common.ExecutionStatus.RUNNING)
         return plugin.function(*args, **kwargs)
 
 
@@ -85,7 +86,7 @@ def exec_predict(
             plugin.instance_arg_name, instance, args, kwargs
         )
 
-        state.set_status("running")
+        state.set_status(common.ExecutionStatus.RUNNING)
         return instance, plugin.function(*args, **kwargs)
 
 
@@ -105,38 +106,41 @@ class _StateManager:
 
     def __init__(self, state_cb):
         self._state_cb = state_cb
-        self._state = {}
+        self._state = common.ExecutionState(
+            status=common.ExecutionStatus.INIT,
+            data_access={},
+            action=None,
+        )
 
     def get_status(self):
-        return self._state["status"]
+        return self._state.status
 
-    def set_status(self, status):
-        self._update("status", status)
+    def set_status(self, status: common.ExecutionStatus):
+        self._state = self._state._replace(status=status)
+        self._state_cb(self._state)
 
-    def update_action(self, value):
-        self._update("action", value)
+    def update_action(self, value: Any):
+        self._state = self._state._replace(action=value)
+        self._state_cb(self._state)
 
-    def update_data_access_complete(self, state):
-        self._update("data_access", state)
-
-    def update_data_access_arg(self, arg_name, value):
-        data_access_state = dict(self._state.get("data_access", {}))
-        data_access_state[arg_name] = value
-        self.update_data_access_complete(data_access_state)
-
-    def _update(self, key, value):
-        self._state = {**self._state, key: value}
+    def update_data_access_arg(
+        self, arg_name: Union[str, int], substate: common.ExecutionState
+    ):
+        data_access_state = self._state.data_access
+        data_access_state = {**data_access_state, arg_name: substate}
+        self._state = self._state._replace(data_access=data_access_state)
         self._state_cb(self._state)
 
     def __enter__(self):
-        self._state = {
-            "status": "init",
-        }
         self._state_cb(self._state)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.set_status("error" if exc_type else "complete")
+        self.set_status(
+            common.ExecutionStatus.ERROR
+            if exc_type
+            else common.ExecutionStatus.COMPLETE
+        )
 
 
 def _preprocess_args(args, kwargs, plugin, state):
@@ -155,8 +159,8 @@ def _handle_data_access_args(args, kwargs, state: _StateManager):
     for arg_name, arg in list(enumerate(args)) + list(kwargs.items()):
         if not isinstance(arg, common.DataAccessArg):
             continue
-        if state.get_status() != "data_access":
-            state.set_status("data_access")
+        if state.get_status() != common.ExecutionStatus.DATA_ACCESS:
+            state.set_status(common.ExecutionStatus.DATA_ACCESS)
         updates[arg_name] = exec_data_access(
             arg.name,
             lambda substate: state.update_data_access_arg(arg_name, substate),

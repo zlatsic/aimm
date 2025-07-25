@@ -10,7 +10,6 @@ from typing import Any, ByteString, Union
 
 from aimm.plugins import common
 from aimm.plugins import decorators
-from aimm.plugins.common import ExecutionState
 
 
 def exec_data_access(

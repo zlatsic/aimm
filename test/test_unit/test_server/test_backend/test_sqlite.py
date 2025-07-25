@@ -22,8 +22,8 @@ async def test_create(tmp_path):
 
 async def test_models(backend, plugin_teardown):
     @plugins.serialize(["test"])
-    def serialize(instance):
-        return instance.encode("utf-8")
+    def serialize(instance_object):
+        return instance_object.encode("utf-8")
 
     @plugins.deserialize(["test"])
     def deserialize(instance_blob):
@@ -31,10 +31,10 @@ async def test_models(backend, plugin_teardown):
 
     await backend.create_model("test", "instance")
     expected_model = common.Model(
-        instance_id=1, instance="instance", model_type="test"
+        instance_id=1, model_type="test"
     )
-    assert await backend.get_models() == [expected_model]
+    assert await backend.scan_models() == [expected_model]
 
-    model_updated = expected_model._replace(instance="instance2")
-    await backend.update_model(model_updated)
-    assert await backend.get_models() == [model_updated]
+    await backend.update_model(expected_model, instance="instance")
+    instance = await backend.get_instance(1)
+    assert instance == "instance"

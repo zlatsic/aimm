@@ -1,4 +1,5 @@
 import itertools
+from typing import Any
 
 from hat import aio
 
@@ -19,15 +20,17 @@ class DummyBackend(common.Backend):
         """Async group"""
         return self._group
 
-    async def get_models(self):
+    async def scan_models(self):
         return []
 
     async def create_model(self, model_type, instance):
         return common.Model(
             model_type=model_type,
-            instance=instance,
             instance_id=next(self._id_counter),
         )
 
-    async def update_model(self, model):
+    async def update_model(self, model, instance):
         return
+
+    async def get_instance(self, instance_id: int) -> (str, Any):
+        return "dummy", None

@@ -1,6 +1,7 @@
 from functools import partial
 from pathlib import Path
 import sqlite3
+from typing import Any
 
 from hat import aio
 
@@ -38,12 +39,20 @@ class SQLiteBackend(common.Backend):
             aio.call_on_cancel, self._executor, _ext_db_close, self._connection
         )
 
-    async def get_models(self):
+    async def scan_models(self):
         query = """SELECT * FROM models"""
         cursor = await self._execute(query)
         rows = await self._executor(_ext_fetchall, cursor)
-        models = [await self._row_to_model(row) for row in rows]
+        models = [_row_to_model(row) for row in rows]
         return models
+
+    async def get_instance(self, instance_id: int) -> (str, Any):
+        query = """SELECT type, instance FROM models WHERE id=:instance_id"""
+        cursor = await self._execute(query, instance_id=instance_id)
+        rows = await self._executor(_ext_fetchall, cursor)
+        if not rows:
+            raise ValueError("ID not found")
+        return await self._row_to_instance(rows[0])
 
     async def create_model(self, model_type, instance):
         instance_blob = await self._executor(
@@ -57,13 +66,12 @@ class SQLiteBackend(common.Backend):
         )
         return common.Model(
             model_type=model_type,
-            instance=instance,
             instance_id=cursor.lastrowid,
         )
 
-    async def update_model(self, model):
+    async def update_model(self, model, instance):
         instance_blob = await self._executor(
-            plugins.exec_serialize, model.model_type, model.instance
+            plugins.exec_serialize, model.model_type, instance
         )
         query = """UPDATE models
                    SET instance=:instance
@@ -77,15 +85,16 @@ class SQLiteBackend(common.Backend):
             partial(_ext_db_execute, self._connection, query, **kwargs)
         )
 
-    async def _row_to_model(self, row):
+    async def _row_to_instance(self, row):
         model_type = row["type"]
-        return common.Model(
-            instance=await self._executor(
-                plugins.exec_deserialize, model_type, row["instance"]
-            ),
-            model_type=model_type,
-            instance_id=row["id"],
+        return await self._executor(
+            plugins.exec_deserialize, model_type, row["instance"]
         )
+
+
+def _row_to_model(row):
+    model_type = row["type"]
+    return common.Model(model_type=model_type, instance_id=row["id"])
 
 
 def _ext_db_connect(path):

@@ -1,3 +1,5 @@
+from typing import Any
+
 from hat import aio
 import pytest
 
@@ -20,8 +22,11 @@ class MockBackend(common.Backend):
     def queue(self):
         return self._queue
 
-    async def get_models(self):
+    async def scan_models(self):
         return self._models
+
+    async def get_instance(self, instance_id: int) -> (str, Any):
+        pass
 
     async def create_model(self, model_type, instance):
         model = common.Model(
@@ -43,9 +48,9 @@ class MockBackend(common.Backend):
         self._queue.put_nowait(("update", model))
 
 
-async def create_engine(backend=None):
+def create_engine(backend=None):
     backend = backend or MockBackend()
-    return await engine.create(
+    return engine.Engine(
         {
             "sigterm_timeout": 1,
             "max_children": 1,
@@ -56,7 +61,7 @@ async def create_engine(backend=None):
 
 
 async def test_empty():
-    eng = await create_engine()
+    eng = create_engine()
     assert eng.state == {"actions": {}, "models": {}}
     await eng.async_close()
 
@@ -66,7 +71,7 @@ async def test_models_in_backend():
         1: common.Model(instance=None, model_type="test", instance_id=1),
         2: common.Model(instance=None, model_type="test", instance_id=2),
     }
-    eng = await create_engine(MockBackend(models.values()))
+    eng = create_engine(MockBackend(models.values()))
     assert eng.state == {"actions": {}, "models": models}
     await eng.async_close()
 
@@ -74,7 +79,7 @@ async def test_models_in_backend():
 @pytest.mark.timeout(2)
 async def test_create_instance(plugin_teardown):
     backend = MockBackend()
-    eng = await create_engine(backend)
+    eng = create_engine(backend)
     state_queue = aio.Queue()
 
     eng.subscribe_to_state_change(lambda: state_queue.put_nowait(eng.state))
@@ -106,7 +111,7 @@ async def test_create_instance(plugin_teardown):
 @pytest.mark.timeout(2)
 async def test_add_instance(plugin_teardown):
     backend = MockBackend()
-    eng = await create_engine(backend)
+    eng = create_engine(backend)
     states = []
 
     queue = aio.Queue()
@@ -143,7 +148,7 @@ async def test_add_instance(plugin_teardown):
 @pytest.mark.timeout(2)
 async def test_fit(plugin_teardown):
     backend = MockBackend()
-    eng = await create_engine(backend)
+    eng = create_engine(backend)
 
     queue = aio.Queue()
 
@@ -182,7 +187,7 @@ async def test_fit(plugin_teardown):
 # @pytest.mark.timeout(2)
 async def test_predict(plugin_teardown):
     backend = MockBackend()
-    eng = await create_engine(backend)
+    eng = create_engine(backend)
 
     queue = aio.Queue()
 

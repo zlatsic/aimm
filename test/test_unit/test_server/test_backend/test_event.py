@@ -43,7 +43,7 @@ def string_plugins(plugin_teardown):
 async def test_create_model(string_plugins):
     mock_client = MockClient()
     backend = await event.create({"model_prefix": ["model"]}, mock_client)
-    assert await backend.get_models() == []
+    assert await backend.scan_models() == []
 
     await backend.create_model("type", "instance")
     events = await mock_client._register_queue.get()
@@ -62,7 +62,7 @@ async def test_create_model(string_plugins):
 async def test_get_models(string_plugins):
     mock_client = MockClient()
     backend = await event.create({"model_prefix": ["model"]}, mock_client)
-    assert await backend.get_models() == []
+    assert await backend.scan_models() == []
 
     await backend.create_model("type", "instance")
     events = await mock_client._register_queue.get()
@@ -70,10 +70,9 @@ async def test_get_models(string_plugins):
         events=events, more_follows=False
     )
 
-    models = await backend.get_models()
+    models = await backend.scan_models()
     assert len(models) == 1
     model = models[0]
-    assert model.instance == "instance"
     assert model.model_type == "type"
     assert model.instance_id == 1
     await backend.async_close()
@@ -82,13 +81,13 @@ async def test_get_models(string_plugins):
 async def test_update_model(string_plugins):
     mock_client = MockClient()
     backend = await event.create({"model_prefix": ["model"]}, mock_client)
-    assert await backend.get_models() == []
+    assert await backend.scan_models() == []
 
     await backend.create_model("type", "instance")
     await mock_client._register_queue.get()
 
     await backend.update_model(
-        common.Model(instance="instance2", model_type="type", instance_id=1)
+        common.Model(model_type="type", instance_id=1), "instance2"
     )
     events = await mock_client._register_queue.get()
     assert len(events) == 1

@@ -4,8 +4,6 @@ id: 'aimm://server/control/event.yaml#'
 type: object
 required:
     - event_prefixes
-    - state_event_type
-    - action_state_event_type
 properties:
     type:
         const: event
@@ -36,12 +34,4 @@ properties:
                 type: array
                 items:
                     type: string
-    state_event_type:
-        type: array
-        items:
-            type: string
-    action_state_event_type:
-        type: array
-        items:
-            type: string
 ...

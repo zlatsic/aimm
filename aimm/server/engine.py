@@ -1,8 +1,6 @@
-from functools import partial
 import asyncio
-import itertools
 import logging
-import typing
+from typing import Callable, Coroutine, List
 
 from hat import aio
 from hat import util
@@ -10,41 +8,22 @@ from hat import util
 from aimm import plugins
 from aimm.server import common
 from aimm.server import mprocess
-
+from aimm.server.common import ActionState, Model
 
 mlog = logging.getLogger(__name__)
 
 
-async def create(conf: typing.Dict, backend: common.Backend) -> common.Engine:
-    """Create engine
-
+class Engine(common.Engine):
+    """Engine implementation
     Args:
         conf: configuration that follows schema with id
             ``aimm://server/schema.yaml#/definitions/engine``
         backend: backend
-
-    Returns:
-        engine
     """
-    engine = _Engine(conf, backend)
-    await engine.start()
-    return engine
 
-
-class _Engine(common.Engine):
-    """Engine implementation, use :func:`create` to instantiate"""
-
-    def __init__(self, conf, backend):
+    def __init__(self, conf: dict, backend: common.Backend):
         self._group = aio.Group()
         self._backend = backend
-        self._conf = conf
-        self._state = {"actions": {}, "models": {}}
-        self._locks = {
-            instance_id: asyncio.Lock()
-            for instance_id in self._state["models"]
-        }
-
-        self._action_id_gen = itertools.count(1)
 
         self._pool = mprocess.ProcessManager(
             conf["max_children"],
@@ -52,101 +31,26 @@ class _Engine(common.Engine):
             conf["check_children_period"],
             conf["sigterm_timeout"],
         )
-        self._callback_registry = util.CallbackRegistry()
 
     @property
     def async_group(self):
         return self._group
 
-    @property
-    def state(self):
-        return self._state
-
-    async def start(self):
-        models = await self._backend.get_models()
-        self._state = {
-            "actions": {},
-            "models": {model.instance_id: model for model in models},
-        }
-
-    def subscribe_to_state_change(self, cb):
-        return self._callback_registry.register(cb)
+    async def scan_models(self) -> List[Model]:
+        return await self._backend.scan_models()
 
     def create_instance(self, model_type, *args, **kwargs):
-        action_id = next(self._action_id_gen)
-        state_cb = partial(self._update_action, action_id)
-        return create_action(
-            self._group.create_subgroup(),
-            self._act_create_instance,
-            model_type,
-            args,
-            kwargs,
-            state_cb,
-        )
+        state_mgr = _StateManager({
+            "call": "create_instance",
+            "model_type": model_type,
+            "args": [str(a) for a in args],
+            "kwargs": {k: str(v) for k, v in kwargs.items()},
+        })
 
-    async def add_instance(self, model_type, instance):
-        model = await self._backend.create_model(model_type, instance)
-        self._set_model(model)
-        return model
-
-    async def update_instance(self, model: common.Model):
-        """Update existing instance in the state"""
-        self._set_model(model)
-        await self._backend.update_model(model)
-
-    def fit(self, instance_id, *args, **kwargs):
-        action_id = next(self._action_id_gen)
-        state_cb = partial(self._update_action, action_id)
-        return create_action(
-            self._group.create_subgroup(),
-            self._act_fit,
-            instance_id,
-            args,
-            kwargs,
-            state_cb,
-        )
-
-    def predict(self, instance_id, *args, **kwargs):
-        action_id = next(self._action_id_gen)
-        state_cb = partial(self._update_action, action_id)
-        return create_action(
-            self._group.create_subgroup(),
-            self._act_predict,
-            instance_id,
-            args,
-            kwargs,
-            state_cb,
-        )
-
-    def _update_action(self, action_id, action_state):
-        actions = dict(self.state["actions"])
-        actions.update({action_id: action_state})
-        self._update_state(dict(self.state, actions=actions))
-
-    def _set_model(self, model):
-        if model.instance_id not in self._locks:
-            self._locks[model.instance_id] = asyncio.Lock()
-        models = dict(self.state["models"])
-        models.update({model.instance_id: model})
-        self._update_state(dict(self.state, models=models))
-
-    def _update_state(self, new_state):
-        self._state = new_state
-        self._callback_registry.notify()
-
-    async def _act_create_instance(self, model_type, args, kwargs, state_cb):
-        with _StateManager(
-            {
-                "call": "create_instance",
-                "model_type": model_type,
-                "args": [str(a) for a in args],
-                "kwargs": {k: str(v) for k, v in kwargs.items()},
-            },
-            state_cb,
-        ) as state:
-
-            handler = self._pool.create_handler(state.set_run)
-            state.set_status(common.ActionStatus.RUNNING)
+        @_wrap_action(state_mgr)
+        async def action():
+            handler = self._pool.create_handler(state_mgr.set_run)
+            state_mgr.set_status(common.ActionStatus.RUNNING)
             instance = await handler.run(
                 plugins.exec_instantiate,
                 model_type,
@@ -154,123 +58,155 @@ class _Engine(common.Engine):
                 *args,
                 **kwargs
             )
-            state.set_status(common.ActionStatus.STORING)
 
-            model = await self._backend.create_model(model_type, instance)
-            self._set_model(model)
-        return model
+            state_mgr.set_status(common.ActionStatus.STORING)
+            return await self._backend.create_model(model_type, instance)
 
-    async def _act_fit(self, instance_id, args, kwargs, state_cb):
-        with _StateManager(
-            {
-                "call": "fit",
-                "model": instance_id,
-                "args": [str(a) for a in args],
-                "kwargs": {k: str(v) for k, v in kwargs.items()},
-            },
-            state_cb,
-        ) as state:
+        return _Action(self._group.create_subgroup(), state_mgr, action)
 
-            handler = self._pool.create_handler(state.set_run)
-            model = self.state["models"][instance_id]
-            async with self._locks[instance_id]:
-                state.set_status(common.ActionStatus.RUNNING)
-                instance = await handler.run(
-                    plugins.exec_fit,
-                    model.model_type,
-                    model.instance,
-                    handler.proc_notify_state_change,
-                    *args,
-                    **kwargs
-                )
+    async def add_instance(self, model_type, instance):
+        return await self._backend.create_model(model_type, instance)
 
-            state.set_status(common.ActionStatus.STORING)
-            return await self._update_model(instance, model)
+    async def update_instance(self, model, instance):
+        await self._backend.update_instance(model, instance)
 
-    async def _act_predict(self, instance_id, args, kwargs, state_cb):
-        with _StateManager(
-            {
-                "meta": {
-                    "call": "predict",
-                    "model": instance_id,
-                    "args": [str(a) for a in args],
-                    "kwargs": {k: str(v) for k, v in kwargs.items()},
-                },
-                "status": "running",
-                "run": None,
-            },
-            state_cb,
-        ) as state:
-            handler = self._pool.create_handler(state.set_run)
-            async with self._locks[instance_id]:
-                model = self.state["models"][instance_id]
-                state.set_status(common.ActionStatus.RUNNING)
-                instance, prediction = await handler.run(
-                    plugins.exec_predict,
-                    model.model_type,
-                    model.instance,
-                    handler.proc_notify_state_change,
-                    *args,
-                    **kwargs
-                )
+    def fit(self, instance_id, *args, **kwargs):
+        state_mgr = _StateManager({
+            "call": "fit",
+            "model": instance_id,
+            "args": [str(a) for a in args],
+            "kwargs": {k: str(v) for k, v in kwargs.items()},
+        })
 
-            state.set_status(common.ActionStatus.STORING)
-            await self._update_model(instance, model)
+        @_wrap_action(state_mgr)
+        async def action():
+            handler = self._pool.create_handler(state_mgr.set_run)
+            state_mgr.set_status(common.ActionStatus.RUNNING)
+            model_type, instance = await self._backend.get_instance(
+                instance_id,
+            )
+            instance = await handler.run(
+                plugins.exec_fit,
+                model_type,
+                instance,
+                handler.proc_notify_state_change,
+                *args,
+                **kwargs
+            )
+
+            state_mgr.set_status(common.ActionStatus.STORING)
+            await self._backend.update_instance(
+                common.Model(model_type=model_type, instance_id=instance_id),
+                instance,
+            )
+
+        return _Action(self._group.create_subgroup(), state_mgr, action)
+
+    def predict(self, instance_id, *args, **kwargs):
+        state_mgr = _StateManager({
+            "call": "predict",
+            "model": instance_id,
+            "args": [str(a) for a in args],
+            "kwargs": {k: str(v) for k, v in kwargs.items()},
+        })
+
+        @_wrap_action(state_mgr)
+        async def action():
+            handler = self._pool.create_handler(state_mgr.set_run)
+            model_type, instance = await self._backend.get_instance(
+                instance_id,
+            )
+            state_mgr.set_status(common.ActionStatus.RUNNING)
+            instance, prediction = await handler.run(
+                plugins.exec_predict,
+                model_type,
+                instance,
+                handler.proc_notify_state_change,
+                *args,
+                **kwargs
+            )
+
+            state_mgr.set_status(common.ActionStatus.STORING)
+            await self._backend.update_instance(
+                common.Model(model_type=model_type, instance_id=instance_id),
+                instance,
+            )
             return prediction
 
-    async def _update_model(self, instance, model):
-        new_model = common.Model(
-            instance=instance,
-            model_type=model.model_type,
-            instance_id=model.instance_id,
-        )
-        await self._backend.update_model(new_model)
-
-        self._set_model(new_model)
-        return new_model
-
-
-def create_action(
-    async_group: aio.Group, fn: typing.Callable, *args, **kwargs
-) -> common.Action:
-    return _Action(async_group, fn, *args, **kwargs)
+        return _Action(self._group.create_subgroup(), state_mgr, action)
 
 
 class _Action(common.Action):
-    def __init__(self, async_group, fn, *args, **kwargs):
+    def __init__(
+        self, async_group, state: "_StateManager", call: Callable
+    ):
         self._group = async_group
-        self._task = self._group.spawn(fn, *args, **kwargs)
+        self._state = state
+
+        self._task = self._group.spawn(self._run, state, call)
 
     @property
     def async_group(self):
         return self._group
 
+    def subscribe_to_state_change(
+        self,
+        state_cb: Callable[[ActionState], None],
+    ) -> util.RegisterCallbackHandle:
+        return self._state.subscribe_to_state_change(state_cb)
+
     async def wait_result(self):
         return await self._task
 
+    async def _run(self, call: Callable):
+        try:
+            await aio.call(call)
+        finally:
+            await self.async_close()
+
 
 class _StateManager:
-    def __init__(self, meta, state_cb):
-        self._state_cb = state_cb
+    def __init__(self, meta: dict):
+        self._meta = meta
+        self._state = None
+        self._callback_registry = util.CallbackRegistry()
+
+    def initialize(self):
         self._state = common.ActionState(
-            meta=meta, status=common.ActionStatus.INIT, run=None
+            meta=self._meta,
+            status=common.ActionStatus.INIT,
+            run=None,
         )
+        self._callback_registry.notify(self._state)
 
     def set_status(self, status: common.ActionStatus):
+        if not isinstance(self._state, common.ActionState):
+            raise Exception("state not initialized")
         self._state = self._state._replace(status=status)
-        self._state_cb(self._state)
+        self._callback_registry.notify(self._state)
 
     def set_run(self, run: plugins.ExecutionState):
+        if not isinstance(self._state, common.ActionState):
+            raise Exception("state not initialized")
         self._state = self._state._replace(run=run)
-        self._state_cb(self._state)
+        self._callback_registry.notify(self._state)
 
-    def __enter__(self) -> "_StateManager":
-        self._state_cb(self._state)
-        return self
+    def subscribe_to_state_change(self, cb: Callable[[common.ActionState], None]):
+        return self._callback_registry.register(cb)
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.set_status(
-            common.ActionStatus.ERROR
-            if exc_type
-            else common.ActionStatus.COMPLETE
-        )
+
+def _wrap_action(state_manager: _StateManager):
+    def inner(func: Callable[[], Coroutine]):
+        async def action():
+            state_manager.initialize()
+            try:
+                result = await func()
+                state_manager.set_status(common.ActionStatus.COMPLETE)
+                return result
+            except asyncio.CancelledError:
+                state_manager.set_status(common.ActionStatus.CANCELLED)
+            except Exception:
+                state_manager.set_status(common.ActionStatus.ERROR)
+                raise
+        return action
+    return inner

@@ -1,7 +1,8 @@
 import asyncio
 import base64
+from typing import List, Any, Callable
 
-from hat import aio
+from hat import aio, util
 import hat.event.common
 import pytest
 
@@ -9,6 +10,7 @@ import aimm.server.control.event
 import aimm.server.engine
 from aimm.server import common
 from aimm import plugins
+from server.common import Model, ActionState
 
 
 class MockClient:
@@ -21,52 +23,44 @@ class MockClient:
 
 
 class MockEngine(common.Engine):
+
     def __init__(
         self,
-        state=None,
         create_instance_cb=None,
+        scan_models_cb=None,
         add_instance_cb=None,
         update_instance_cb=None,
         fit_cb=None,
         predict_cb=None,
     ):
-        if state is None:
-            state = {"models": {}, "actions": {}}
-        self._state = state
         self._cb = None
         self._create_instance_cb = create_instance_cb
+        self._scan_models_cb = scan_models_cb
         self._add_instance_cb = add_instance_cb
         self._update_instance_cb = update_instance_cb
         self._fit_cb = fit_cb
         self._predict_cb = predict_cb
 
         self._group = aio.Group()
+        self._actions = []
 
     @property
     def async_group(self):
         return self._group
 
-    @property
-    def state(self):
-        return self._state
-
-    @state.setter
-    def state(self, value):
-        self._state = value
-        self._cb()
-
-    def subscribe_to_state_change(self, cb):
-        self._cb = cb
-
     def create_instance(self, *args, **kwargs):
-        if self._create_instance_cb:
-            return aimm.server.engine.create_action(
-                self._group.create_subgroup(),
-                aio.call,
-                self._create_instance_cb,
-                *args,
-                **kwargs
-            )
+        if not self._create_instance_cb:
+            raise NotImplementedError()
+        return MockAction(
+            self._group.create_subgroup(),
+            self._create_instance_cb,
+            *args,
+            **kwargs,
+        )
+
+    async def scan_models(self) -> List[Model]:
+        if self._scan_models_cb:
+            return await aio.call(self._scan_models_cb)
         raise NotImplementedError()
 
     async def add_instance(self, *args, **kwargs):
@@ -81,25 +75,48 @@ class MockEngine(common.Engine):
 
     def fit(self, *args, **kwargs):
         if self._fit_cb:
-            return aimm.server.engine.create_action(
+            action = MockAction(
                 self._group.create_subgroup(),
-                aio.call,
                 self._fit_cb,
                 *args,
-                **kwargs
+                **kwargs,
             )
+            self._actions.append(action)
+            return action
         raise NotImplementedError()
 
     def predict(self, *args, **kwargs):
         if self._predict_cb:
-            return aimm.server.engine.create_action(
+            return MockAction(
                 self._group.create_subgroup(),
-                aio.call,
                 self._predict_cb,
                 *args,
-                **kwargs
+                **kwargs,
             )
         raise NotImplementedError()
+
+
+class MockAction(common.Action):
+
+    def __init__(self, group, fn, *args, **kwargs):
+        self._group = group
+        self._cb_registry = util.CallbackRegistry()
+
+        self._task = self.async_group.spawn(fn, *args, **kwargs)
+
+    @property
+    def async_group(self) -> aio.Group:
+        return self._group
+
+    def subscribe_to_state_change(
+        self,
+        state_cb: Callable[
+            [ActionState], None]
+    ) -> util.RegisterCallbackHandle:
+        return self._cb_registry.register(state_cb)
+
+    async def wait_result(self) -> Any:
+        return await self._task
 
 
 def assert_event(event, event_type, payload, source_timestamp=None):
@@ -118,21 +135,7 @@ def conf():
             "predict": ["predict"],
             "cancel": ["cancel"],
         },
-        "state_event_type": ["state"],
-        "action_state_event_type": ["action_state"],
     }
-
-
-@pytest.mark.timeout(1)
-async def test_state():
-    client = MockClient()
-    engine = MockEngine()
-    control = await aimm.server.control.event.create(conf(), engine, client)
-    events = await client._register_queue.get()
-    assert len(events) == 1
-    assert_event(events[0], ("state",), {"models": {}, "actions": {}})
-
-    await control.async_close()
 
 
 @pytest.mark.timeout(1)
@@ -174,9 +177,7 @@ async def test_create_instance():
     assert call["args"] == tuple(args)
     assert call["kwargs"] == kwargs
 
-    call["complete_future"].set_result(
-        common.Model(instance=None, instance_id=1, model_type="model")
-    )
+    call["complete_future"].set_result(1)
     events = await client._register_queue.get()
     assert len(events) == 1
     event = events[0]

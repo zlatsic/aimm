@@ -2,7 +2,6 @@ from typing import (
     Any,
     Dict,
     Callable,
-    Iterable,
     List,
     NamedTuple,
     Optional,
@@ -35,54 +34,24 @@ only argument and returns a subscription object.
 
 
 class Model(NamedTuple):
-    """Server's representation of objects returned by
-    :func:`plugins.exec_instantiate`. Contains all metadata necessary to
-    identify and perform other actions with it."""
+    """Model descriptor, contains all data necessary to identify and perform
+    other actions with it."""
 
-    instance: Any
-    """instance"""
     model_type: str
     """model type, used to identify which plugin to use"""
     instance_id: int
     """instance id"""
 
 
-class DataAccess(NamedTuple):
-    """Representation of a :func:`plugins.exec_data_access` call. May be passed
-    as an argument in some methods, indicating that data needs to be retrieved
-    prior to calling the main action. See more details on the exact method
-    docstrings."""
-
-    name: str
-    """name of the data access type, used to identify which plugin to use"""
-    args: Iterable
-    """positional arguments to be passed to the plugin call"""
-    kwargs: Dict[str, Any]
-    """keyword arguments to be passed to the plugin call"""
-
-
 class Engine(aio.Resource, abc.ABC):
     """Engine interface"""
-
-    @property
-    @abc.abstractmethod
-    def state(self) -> Dict:
-        """Engine state, contains references to all models and actions. It's
-        never modified in-place, instead :meth:`subscribe_to_state_change`
-        should be used"""
-
-    @abc.abstractmethod
-    def subscribe_to_state_change(
-        self, cb: Callable[[], None]
-    ) -> util.RegisterCallbackHandle:
-        """Subscribes to any changes to the engine state"""
 
     @abc.abstractmethod
     def create_instance(
         self, model_type: str, *args: Any, **kwargs: Any
     ) -> "Action":
         """Starts an action that creates a model instance and stores it in
-        state.
+        state. Action result is the model ID.
 
         Args:
             model_type: model type
@@ -90,11 +59,21 @@ class Engine(aio.Resource, abc.ABC):
             **kwargs: instantiation keyword arguments"""
 
     @abc.abstractmethod
-    async def add_instance(self, model_type: str, instance: Any) -> Model:
-        """Adds existing instance to the state"""
+    async def scan_models(self) -> List[Model]:
+        """Fetch all stored model representations.
+
+        Returns:
+            persisted models"""
 
     @abc.abstractmethod
-    async def update_instance(self, model: Model):
+    async def add_instance(self, model_type: str, instance: Any) -> int:
+        """Adds existing instance to the state
+
+        Returns:
+            Model ID"""
+
+    @abc.abstractmethod
+    async def update_instance(self, model: Model, instance: Any):
         """Update existing instance in the state"""
 
     @abc.abstractmethod
@@ -136,9 +115,37 @@ class Engine(aio.Resource, abc.ABC):
             the model's prediction"""
 
 
+class ActionStatus(enum.StrEnum):
+    INIT = "init"
+    RUNNING = "running"
+    STORING = "storing"
+    COMPLETE = "complete"
+    ERROR = "error"
+    CANCELLED = "cancelled"
+
+
+class ActionState(NamedTuple):
+    """Object representing the state of an individual action"""
+
+    meta: dict[str, Any]
+    """Information about the action call"""
+    status: ActionStatus
+    """Current action status"""
+    run: Optional[plugins.ExecutionState]
+
+
 class Action(aio.Resource, abc.ABC):
     """Represents a manageable call. Is an :class:`aio.Resource` so call can be
     cancelled using ``async_close``."""
+
+    @abc.abstractmethod
+    def subscribe_to_state_change(
+        self, state_cb: Callable[[ActionState], None]
+    ) -> util.RegisterCallbackHandle:
+        """Provide a function to be called every time action state changes.
+
+        Args:
+            state_cb: function called whenever action state changes"""
 
     @abc.abstractmethod
     async def wait_result(self) -> Any:
@@ -158,24 +165,6 @@ def create_backend(
     signature"""
 
 
-class ActionStatus(enum.StrEnum):
-    INIT = "init"
-    RUNNING = "running"
-    STORING = "storing"
-    COMPLETE = "complete"
-    ERROR = "error"
-
-
-class ActionState(NamedTuple):
-    """Object representing the state of an individual action"""
-
-    meta: dict[str, Any]
-    """Information about the action call"""
-    status: ActionStatus
-    """Current action status"""
-    run: Optional[plugins.ExecutionState]
-
-
 class Backend(aio.Resource, abc.ABC):
     """Backend interface. In order to integrate in the aimm server, create a
     module with the implementation and function ``create`` that creates a
@@ -190,29 +179,41 @@ class Backend(aio.Resource, abc.ABC):
     """
 
     @abc.abstractmethod
-    async def get_models(self) -> List[Model]:
-        """Get all persisted models, requires that a deserialization function
-        is defined for all persisted types
+    async def scan_models(self) -> List[Model]:
+        """Get all persisted models.
 
         Returns:
             persisted models"""
 
     @abc.abstractmethod
-    async def create_model(self, model_type: str, instance: Any):
-        """Store a new model, requires that a serialization for the model type
-        is defined"""
+    async def get_instance(self, instance_id: int) -> (str, Any):
+        """Get deserialized model instance, requires that a deserialization
+        function is defined for the persisted type
+
+        Returns:
+            Model type and instance."""
+
+    async def update_instance(self, model: Model, instance: Any):
+        """Set model instance, requires a serialization function configured for
+        that type.
+
+        Args:
+            model: model structure containing model identification info
+            instance: new model instance to be stored
+        """
 
     @abc.abstractmethod
-    async def update_model(self, model: Model):
-        """Replaces the old stored model with the new one, requires that a
-        serialization is defined for the model type"""
+    async def create_model(self, model_type: str, instance: Any) -> int:
+        """Store a new model, requires that a serialization for the model type
+        is defined
 
-    def register_model_change_cb(
-        self, cb: Callable[[Model], None]
-    ) -> util.RegisterCallbackHandle:
-        """Register callback for backend-side model changes. Implementation
-        optional, defaults to ignoring the callback."""
-        return util.RegisterCallbackHandle(cancel=lambda: None)
+        Returns:
+            Model ID."""
+
+    @abc.abstractmethod
+    async def update_model(self, model: Model, instance: Any):
+        """Replaces the old stored model instance with the new one, requires
+        that a serialization is defined for the model type"""
 
     async def process_events(self, events: hat.event.common.Event):
         """Implementation optional. Called when event client receives events

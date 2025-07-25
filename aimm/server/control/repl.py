@@ -81,10 +81,10 @@ class Session(aio.Resource):
             return self._login(data["username"], data["password"])
         elif name == "logout":
             return self._logout()
-        elif name == "create_instance":
-            return await self._create_instance(
-                data["model_type"], data["args"], data["kwargs"]
-            )
+        else:
+            self._check_authorization()
+        if name == "scan_models":
+            return self._scan_models()
         elif name == "add_instance":
             return await self._add_instance(
                 data["model_type"], data["instance_b64"]
@@ -93,34 +93,23 @@ class Session(aio.Resource):
             return await self._update_instance(
                 data["model_type"], data["instance_id"], data["instance_b64"]
             )
+
+        args = [_arg_from_json(a) for a in data["args"]]
+        kwargs = {k: _arg_from_json(v) for k, v in data["kwargs"].items()}
+
+        if name == "create_instance":
+            return await self._create_instance(
+                data["model_type"], args, kwargs
+            )
         elif name == "fit":
-            return await self._fit(
-                data["instance_id"], data["args"], data["kwargs"]
-            )
+            return await self._fit(data["instance_id"], args, kwargs)
         elif name == "predict":
-            return await self._predict(
-                data["instance_id"], data["args"], data["kwargs"]
-            )
+            return await self._predict(data["instance_id"], args, kwargs)
         else:
             return {"success": False}
 
     async def _run(self):
-        await self._on_state_change()
-        with self._engine.subscribe_to_state_change(
-            lambda: self.async_group.spawn(self._on_state_change)
-        ):
-            await self._connection.wait_closed()
-
-    async def _on_state_change(self):
-        if self._user:
-            self._connection.state.set(
-                [],
-                await _generate_state(
-                    self._engine.state["models"], self._engine.state["actions"]
-                ),
-            )
-        else:
-            self._connection.state.set([], await _generate_state({}, {}))
+        await self._connection.wait_closed()
 
     def _login(self, username, password):
         if {"username": username, "password": password} in self._conf["users"]:
@@ -134,96 +123,45 @@ class Session(aio.Resource):
         self._user = None
         self._connection.set_local_data(None)
 
-    async def _create_instance(self, model_type, args, kwargs):
-        self._check_authorization()
-        args = [_arg_from_json(a) for a in args]
-        kwargs = {k: _arg_from_json(v) for k, v in kwargs.items()}
-
-        action = self._engine.create_instance(model_type, *args, **kwargs)
-        model = await action.wait_result()
-        return await _model_to_json(model)
+    async def _scan_models(self):
+        return [
+            _model_to_json(model) for model in await self._engine.scan_models()
+        ]
 
     async def _add_instance(self, model_type, instance):
-        self._check_authorization()
         instance = await _model_from_json(instance, model_type)
-        model = await self._engine.add_instance(model_type, instance)
-        return await _model_to_json(model)
+        return _model_to_json(
+            await self._engine.add_instance(model_type, instance)
+        )
 
     async def _update_instance(self, model_type, instance_id, instance):
-        self._check_authorization()
-        model = common.Model(
+        await self._engine.update_instance(common.Model(
             model_type=model_type,
             instance_id=instance_id,
-            instance=await _model_from_json(instance, model_type),
-        )
-        await self._engine.update_instance(model)
-        return await _model_to_json(model)
+        ), instance)
+
+    async def _create_instance(self, model_type, args, kwargs):
+        action = self._engine.create_instance(model_type, *args, **kwargs)
+        return _model_to_json(await action.wait_result())
 
     async def _fit(self, instance_id, args, kwargs):
-        self._check_authorization()
-        args = [_arg_from_json(a) for a in args]
-        kwargs = {k: _arg_from_json(v) for k, v in kwargs.items()}
-
         action = self._engine.fit(instance_id, *args, **kwargs)
-        model = await action.wait_result()
-        return await _model_to_json(model)
+        return _model_to_json(await action.wait_result())
 
     async def _predict(self, instance_id, args, kwargs):
-        self._check_authorization()
-        args = [_arg_from_json(a) for a in args]
-        kwargs = {k: _arg_from_json(v) for k, v in kwargs.items()}
-
         action = self._engine.predict(instance_id, *args, **kwargs)
-        prediction = await action.wait_result()
-        return _prediction_to_json(prediction)
+        return _prediction_to_json(await action.wait_result())
 
     def _check_authorization(self):
         if self._user is None:
             raise Exception("unauthorized action")
 
 
-async def _generate_state(models, actions):
-    return {
-        "models": {
-            model_id: await _model_to_json(model)
-            for model_id, model in models.items()
-        },
-        "actions": {
-            k: _action_to_json(action) for k, action in actions.items()
-        },
-    }
-
-
-async def _model_to_json(model):
-    executor = aio.create_executor()
-    instance_bytes = base64.b64encode(
-        await executor(
-            plugins.exec_serialize, model.model_type, model.instance
-        )
-    ).decode("utf-8")
+def _model_to_json(model):
     return {
         "instance_id": model.instance_id,
         "model_type": model.model_type,
-        "instance": instance_bytes,
     }
-
-
-def _action_to_json(action: common.ActionState):
-    action_dict = action._asdict()
-    action_dict["run"] = _execution_to_json(action.run)
-    return action_dict
-
-
-def _execution_to_json(execution_state: plugins.ExecutionState):
-    if execution_state is None:
-        return None
-    run_dict = execution_state._asdict()
-    run_dict["data_access"] = {
-        k: _execution_to_json(v)
-        for k, v in execution_state.data_access.items()
-    }
-    run_dict["action"] = _execution_to_json(execution_state.action)
-    return run_dict
 
 
 def _prediction_to_json(prediction):

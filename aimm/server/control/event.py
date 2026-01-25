@@ -29,9 +29,9 @@ async def create(conf, engine, event_client):
 
 def _log_exception(error_log):
     def inner(func):
-        def wrapper():
+        async def wrapper(*args, **kwargs):
             try:
-                func()
+                return await func(*args, **kwargs)
             except ValueError as e:
                 mlog.warning(error_log, exc_info=e)
             except Exception as e:
@@ -76,6 +76,14 @@ class EventControl(common.Control):
     def _prefix_match(self, action_prefix, event):
         if action_prefix not in self._event_prefixes:
             return False
+        # For actions that need instance_id (fit, predict, update_instance), 
+        # the pattern is [prefix, instance_id, "call", "*"]
+        if action_prefix in ["fit", "predict", "update_instance"]:
+            prefix = self._event_prefixes[action_prefix]
+            if len(event.type) >= len(prefix) + 3:
+                return (list(event.type[:len(prefix)]) == prefix and 
+                        list(event.type[-2:]) == ["call", "*"])
+        # For other actions, the pattern is [prefix, "call", "*"]
         return hat.event.common.matches_query_type(
             event.type, self._event_prefixes[action_prefix] + ["call", "*"]
         )
@@ -153,7 +161,9 @@ class EventControl(common.Control):
     def _action_context(self, event, action):
         data = event.payload.data
         with action.subscribe_to_state_change(
-            lambda state: self._register_action_state(event, state)
+            lambda state: self.async_group.spawn(
+                self._register_action_state, event, state
+            )
         ):
             self._in_progress[data["request_id"]] = action
             try:

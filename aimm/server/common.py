@@ -3,6 +3,7 @@ from typing import (
     Dict,
     Callable,
     List,
+    Tuple,
     NamedTuple,
     Optional,
     Collection,
@@ -186,7 +187,7 @@ class Backend(aio.Resource, abc.ABC):
             persisted models"""
 
     @abc.abstractmethod
-    async def get_instance(self, instance_id: int) -> (str, Any):
+    async def get_instance(self, instance_id: int) -> Tuple[str, Any]:
         """Get deserialized model instance, requires that a deserialization
         function is defined for the persisted type
 

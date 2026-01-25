@@ -32,5 +32,5 @@ class DummyBackend(common.Backend):
     async def update_model(self, model, instance):
         return
 
-    async def get_instance(self, instance_id: int) -> (str, Any):
+    async def get_instance(self, instance_id: int) -> tuple[str, Any]:
         return "dummy", None

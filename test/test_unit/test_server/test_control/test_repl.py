@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+from typing import Any, Callable
 
 from hat import aio
 from hat import util
@@ -9,7 +10,7 @@ from aimm import plugins
 from aimm.server import common
 import aimm.client.repl
 import aimm.server.control.repl
-import aimm.server.engine
+from aimm.client.repl import Model
 
 
 class MockEngine(common.Engine):
@@ -21,6 +22,7 @@ class MockEngine(common.Engine):
         update_instance_cb=None,
         fit_cb=None,
         predict_cb=None,
+        scan_models_cb=None,
     ):
         if state is None:
             state = {"models": {}, "actions": {}}
@@ -31,6 +33,7 @@ class MockEngine(common.Engine):
         self._update_instance_cb = update_instance_cb
         self._fit_cb = fit_cb
         self._predict_cb = predict_cb
+        self._scan_models_cb = scan_models_cb
         self._group = aio.Group()
 
     @property
@@ -54,12 +57,17 @@ class MockEngine(common.Engine):
 
         return util.RegisterCallbackHandle(cancel=cancel)
 
+    async def scan_models(self):
+        if self._scan_models_cb:
+            return await aio.call(self._scan_models_cb)
+        return []
+
     def create_instance(self, *args, **kwargs):
         if self._create_instance_cb:
-            return aimm.server.engine._Action(
+            return MockAction(
                 self._group.create_subgroup(),
-                aio.call,
                 self._create_instance_cb,
+                "create_instance",
                 *args,
                 **kwargs,
             )
@@ -77,10 +85,10 @@ class MockEngine(common.Engine):
 
     def fit(self, *args, **kwargs):
         if self._fit_cb:
-            return aimm.server.engine._Action(
+            return MockAction(
                 self._group.create_subgroup(),
-                aio.call,
                 self._fit_cb,
+                "fit",
                 *args,
                 **kwargs,
             )
@@ -88,14 +96,109 @@ class MockEngine(common.Engine):
 
     def predict(self, *args, **kwargs):
         if self._predict_cb:
-            return aimm.server.engine._Action(
+            return MockAction(
                 self._group.create_subgroup(),
-                aio.call,
                 self._predict_cb,
+                "predict",
                 *args,
                 **kwargs,
             )
         raise NotImplementedError()
+
+
+class MockAction(common.Action):
+    def __init__(self, group, fn, call_type, *args, **kwargs):
+        self._group = group
+        self._cb_registry = util.CallbackRegistry()
+        self._fn = fn
+        self._call_type = call_type
+        self._args = args
+        self._kwargs = kwargs
+        self._result = None
+        self._task = None
+
+    @property
+    def async_group(self) -> aio.Group:
+        return self._group
+
+    def subscribe_to_state_change(
+        self,
+        state_cb: Callable[[common.ActionState], None]
+    ) -> util.RegisterCallbackHandle:
+        return self._cb_registry.register(state_cb)
+
+    async def wait_result(self) -> Any:
+        # Create meta based on call type
+        if self._call_type == "create_instance":
+            meta = {
+                "call": "create_instance",
+                "model_type": self._args[0] if self._args else "unknown",
+                "args": [str(a) for a in self._args[1:]],
+                "kwargs": {k: str(v) for k, v in self._kwargs.items()},
+            }
+        elif self._call_type == "fit":
+            meta = {
+                "call": "fit",
+                "model": self._args[0] if self._args else "unknown",
+                "args": [str(a) for a in self._args[1:]],
+                "kwargs": {k: str(v) for k, v in self._kwargs.items()},
+            }
+        elif self._call_type == "predict":
+            meta = {
+                "call": "predict",
+                "model": self._args[0] if self._args else "unknown",
+                "args": [str(a) for a in self._args[1:]],
+                "kwargs": {k: str(v) for k, v in self._kwargs.items()},
+            }
+        else:
+            meta = {
+                "call": self._call_type,
+                "args": [str(a) for a in self._args],
+                "kwargs": {k: str(v) for k, v in self._kwargs.items()},
+            }
+
+        # Simulate state changes
+        init_state = common.ActionState(
+            meta=meta,
+            status=common.ActionStatus.INIT,
+            run=None,
+        )
+        self._cb_registry.notify(init_state)
+
+        running_state = common.ActionState(
+            meta=meta,
+            status=common.ActionStatus.RUNNING,
+            run=None,
+        )
+        self._cb_registry.notify(running_state)
+
+        # Create a task that can be cancelled
+        async def _execute():
+            return await aio.call(self._fn, *self._args, **self._kwargs)
+
+        self._task = self._group.spawn(_execute)
+
+        # Execute the function
+        try:
+            self._result = await self._task
+        except asyncio.CancelledError:
+            # Send cancelled state
+            cancelled_state = common.ActionState(
+                meta=meta,
+                status=common.ActionStatus.CANCELLED,
+                run=None,
+            )
+            self._cb_registry.notify(cancelled_state)
+            raise
+
+        complete_state = common.ActionState(
+            meta=meta,
+            status=common.ActionStatus.COMPLETE,
+            run=None,
+        )
+        self._cb_registry.notify(complete_state)
+
+        return self._result
 
 
 @pytest.fixture
@@ -124,7 +227,6 @@ async def test_login(conf, juggler_port, monkeypatch):
         ctx.setattr(aimm.client.repl, "getpass", lambda _: "password")
         await client.connect(f"ws://127.0.0.1:{juggler_port}")
     await asyncio.sleep(0.3)
-    assert client.state == {"models": {}, "actions": {}}
     await client.async_close()
     await control.async_close()
 
@@ -182,11 +284,10 @@ async def test_create_instance(
         assert call["args"] == tuple(args)
         assert call["kwargs"] == kwargs
 
-        call["done_future"].set_result(
-            common.Model(instance="xyz", instance_id=1, model_type="Model1")
-        )
+        call["done_future"].set_result(1)  # Return model ID
         model = await task
-    assert model
+    assert model.instance_id == 1
+    assert model.model_type == "Model1"
     await control.async_close()
 
 
@@ -214,11 +315,10 @@ async def test_add_instance(plugins_model1, conf, juggler_port, monkeypatch):
         assert call["instance"] == "xyz"
         assert call["model_type"] == "Model1"
 
-        call["done_future"].set_result(
-            common.Model(instance="xyz", instance_id=1, model_type="Model1")
-        )
+        call["done_future"].set_result(1)  # Return model ID
         model = await task
-    assert model
+    assert model.instance_id == 1
+    assert model.model_type == "Model1"
     await control.async_close()
 
 
@@ -250,11 +350,9 @@ async def test_fit(plugins_model1, conf, juggler_port, monkeypatch):
         assert call["args"] == tuple(args)
         assert call["kwargs"] == kwargs
 
-        call["done_future"].set_result(
-            common.Model(instance="xyz", instance_id=1, model_type="Model1")
-        )
-        model = await task
-    assert model
+        call["done_future"].set_result(None)  # Return model ID
+        result = await task
+    assert result is None
     await control.async_close()
 
 

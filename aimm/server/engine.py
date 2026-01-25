@@ -51,16 +51,19 @@ class Engine(common.Engine):
         async def action():
             handler = self._pool.create_handler(state_mgr.set_run)
             state_mgr.set_status(common.ActionStatus.RUNNING)
-            instance = await handler.run(
-                plugins.exec_instantiate,
-                model_type,
-                handler.proc_notify_state_change,
-                *args,
-                **kwargs
-            )
+            try:
+                instance = await handler.run(
+                    plugins.exec_instantiate,
+                    model_type,
+                    handler.proc_notify_state_change,
+                    *args,
+                    **kwargs
+                )
 
-            state_mgr.set_status(common.ActionStatus.STORING)
-            return await self._backend.create_model(model_type, instance)
+                state_mgr.set_status(common.ActionStatus.STORING)
+                return await self._backend.create_model(model_type, instance)
+            finally:
+                await handler.async_close()
 
         return _Action(self._group.create_subgroup(), state_mgr, action)
 
@@ -82,23 +85,28 @@ class Engine(common.Engine):
         async def action():
             handler = self._pool.create_handler(state_mgr.set_run)
             state_mgr.set_status(common.ActionStatus.RUNNING)
-            model_type, instance = await self._backend.get_instance(
-                instance_id,
-            )
-            instance = await handler.run(
-                plugins.exec_fit,
-                model_type,
-                instance,
-                handler.proc_notify_state_change,
-                *args,
-                **kwargs
-            )
+            try:
+                model_type, instance = await self._backend.get_instance(
+                    instance_id,
+                )
+                instance = await handler.run(
+                    plugins.exec_fit,
+                    model_type,
+                    instance,
+                    handler.proc_notify_state_change,
+                    *args,
+                    **kwargs
+                )
 
-            state_mgr.set_status(common.ActionStatus.STORING)
-            await self._backend.update_instance(
-                common.Model(model_type=model_type, instance_id=instance_id),
-                instance,
-            )
+                state_mgr.set_status(common.ActionStatus.STORING)
+                await self._backend.update_instance(
+                    common.Model(
+                        model_type=model_type, instance_id=instance_id
+                    ),
+                    instance,
+                )
+            finally:
+                await handler.async_close()
 
         return _Action(self._group.create_subgroup(), state_mgr, action)
 
@@ -113,25 +121,30 @@ class Engine(common.Engine):
         @_wrap_action(state_mgr)
         async def action():
             handler = self._pool.create_handler(state_mgr.set_run)
-            model_type, instance = await self._backend.get_instance(
-                instance_id,
-            )
-            state_mgr.set_status(common.ActionStatus.RUNNING)
-            instance, prediction = await handler.run(
-                plugins.exec_predict,
-                model_type,
-                instance,
-                handler.proc_notify_state_change,
-                *args,
-                **kwargs
-            )
+            try:
+                model_type, instance = await self._backend.get_instance(
+                    instance_id,
+                )
+                state_mgr.set_status(common.ActionStatus.RUNNING)
+                instance, prediction = await handler.run(
+                    plugins.exec_predict,
+                    model_type,
+                    instance,
+                    handler.proc_notify_state_change,
+                    *args,
+                    **kwargs
+                )
 
-            state_mgr.set_status(common.ActionStatus.STORING)
-            await self._backend.update_instance(
-                common.Model(model_type=model_type, instance_id=instance_id),
-                instance,
-            )
-            return prediction
+                state_mgr.set_status(common.ActionStatus.STORING)
+                await self._backend.update_instance(
+                    common.Model(
+                        model_type=model_type, instance_id=instance_id
+                    ),
+                    instance,
+                )
+                return prediction
+            finally:
+                await handler.async_close()
 
         return _Action(self._group.create_subgroup(), state_mgr, action)
 
@@ -143,7 +156,7 @@ class _Action(common.Action):
         self._group = async_group
         self._state = state
 
-        self._task = self._group.spawn(self._run, state, call)
+        self._task = self._group.spawn(self._run, call)
 
     @property
     def async_group(self):
@@ -156,13 +169,12 @@ class _Action(common.Action):
         return self._state.subscribe_to_state_change(state_cb)
 
     async def wait_result(self):
-        return await self._task
+        result = await self._task
+        await self.async_close()
+        return result
 
     async def _run(self, call: Callable):
-        try:
-            await aio.call(call)
-        finally:
-            await self.async_close()
+        return await aio.call(call)
 
 
 class _StateManager:
@@ -191,7 +203,10 @@ class _StateManager:
         self._state = self._state._replace(run=run)
         self._callback_registry.notify(self._state)
 
-    def subscribe_to_state_change(self, cb: Callable[[common.ActionState], None]):
+    def subscribe_to_state_change(
+        self,
+        cb: Callable[[common.ActionState], None],
+    ):
         return self._callback_registry.register(cb)
 
 

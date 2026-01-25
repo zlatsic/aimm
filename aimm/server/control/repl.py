@@ -121,7 +121,6 @@ class Session(aio.Resource):
 
     def _logout(self):
         self._user = None
-        self._connection.set_local_data(None)
 
     async def _scan_models(self):
         return [
@@ -130,9 +129,7 @@ class Session(aio.Resource):
 
     async def _add_instance(self, model_type, instance):
         instance = await _model_from_json(instance, model_type)
-        return _model_to_json(
-            await self._engine.add_instance(model_type, instance)
-        )
+        return await self._engine.add_instance(model_type, instance)
 
     async def _update_instance(self, model_type, instance_id, instance):
         await self._engine.update_instance(common.Model(
@@ -142,11 +139,11 @@ class Session(aio.Resource):
 
     async def _create_instance(self, model_type, args, kwargs):
         action = self._engine.create_instance(model_type, *args, **kwargs)
-        return _model_to_json(await action.wait_result())
+        return await action.wait_result()
 
     async def _fit(self, instance_id, args, kwargs):
         action = self._engine.fit(instance_id, *args, **kwargs)
-        return _model_to_json(await action.wait_result())
+        return await action.wait_result()
 
     async def _predict(self, instance_id, args, kwargs):
         action = self._engine.predict(instance_id, *args, **kwargs)

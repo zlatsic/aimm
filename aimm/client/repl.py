@@ -26,7 +26,6 @@ class AIMM(aio.Resource):
         self._address = None
         self._group = aio.Group()
         self._connection = None
-        self._state = None
 
     @property
     def async_group(self) -> aio.Group:
@@ -37,11 +36,6 @@ class AIMM(aio.Resource):
     def address(self) -> typing.Optional[str]:
         """Current address object is connected to"""
         return self._address
-
-    @property
-    def state(self) -> "JSON":
-        """Current state reported from the AIMM server"""
-        return self._state
 
     async def connect(self, address: str):
         """Connects to the specified remote address. Login data is received
@@ -78,24 +72,24 @@ class AIMM(aio.Resource):
         """Creates a model instance on the remote server"""
         args = tuple(_arg_to_json(a) for a in args)
         kwargs = {k: _arg_to_json(v) for k, v in kwargs.items()}
-        model_json = await self._connection.send(
+        instance_id = await self._connection.send(
             "create_instance",
             {"model_type": model_type, "args": args, "kwargs": kwargs},
         )
-        return Model(self, model_json["instance_id"], model_json["model_type"])
+        return Model(self, instance_id, model_type)
 
     async def add_instance(
         self, model_type: str, instance: typing.Any
     ) -> "Model":
         """Adds an existing instance on the remote server"""
-        model_json = await self._connection.send(
+        instance_id = await self._connection.send(
             "add_instance",
             {
                 "model_type": model_type,
                 "instance_b64": _instance_to_b64(instance, model_type),
             },
         )
-        return Model(self, model_json["instance_id"], model_json["model_type"])
+        return Model(self, instance_id, model_type)
 
     async def update_instance(
         self, model_type: str, instance_id: int, instance: typing.Any
@@ -113,14 +107,13 @@ class AIMM(aio.Resource):
 
     async def fit(
         self, instance_id: int, *args: "PluginArg", **kwargs: "PluginArg"
-    ) -> "Model":
+    ) -> typing.Any:
         """Fits an instance on the remote server"""
         args = tuple(_arg_to_json(a) for a in args)
         kwargs = {k: _arg_to_json(v) for k, v in kwargs.items()}
-        model_json = await self._connection.send(
+        return await self._connection.send(
             "fit", {"instance_id": instance_id, "args": args, "kwargs": kwargs}
         )
-        return Model(self, model_json["instance_id"], model_json["model_type"])
 
     async def predict(
         self, instance_id: int, *args: "PluginArg", **kwargs: "PluginArg"
@@ -159,6 +152,14 @@ class Model:
         self._aimm = aimm
         self._instance_id = instance_id
         self._model_type = model_type
+
+    @property
+    def instance_id(self) -> int:
+        return  self._instance_id
+
+    @property
+    def model_type(self) -> str:
+        return  self._model_type
 
     async def fit(self, *args: "PluginArg", **kwargs: "PluginArg"):
         """Fits the model"""

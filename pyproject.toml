@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "aimm"
-version = "1.3.dev0"
+version = "2.0.dev0"
 description = "Artificial intelligence model manager"
 authors = ["zlatsic <zlatan.sicanica@gmail.com>"]
 license = "Apache"
